@@ -5,41 +5,41 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
 
-// Этот класс управляет выделениями для каждого игрока
+// This class manages selections for each player
 public class SelectionManager {
-    // Статический экземпляр (паттерн Singleton - только один объект на весь мод)
+    // Static instance (Singleton pattern - only one object for the entire mod)
     private static SelectionManager instance;
-    
-    // Map (словарь) для хранения выделений каждого игрока
-    // Ключ - UUID игрока, значение - его Selection
+
+    // Map (dictionary) for storing each player's selections
+    // Key - player UUID, value - their Selection
     private Map<UUID, Selection> selections;
-    
-    // Приватный конструктор (чтобы нельзя было создать извне)
+
+    // Private constructor (so it cannot be created from outside)
     private SelectionManager() {
         selections = new HashMap<>();
     }
-    
-    // Получить единственный экземпляр менеджера
+
+    // Get the single instance of the manager
     public static SelectionManager getInstance() {
         if (instance == null) {
             instance = new SelectionManager();
         }
         return instance;
     }
-    
-    // Получить выделение игрока (или создать новое, если его нет)
+
+    // Get player's selection (or create a new one if it doesn't exist)
     public Selection getSelection(Player player) {
         UUID playerId = player.getUUID();
-        
-        // Если у игрока еще нет выделения, создаем новое
+
+        // If player doesn't have a selection yet, create a new one
         if (!selections.containsKey(playerId)) {
             selections.put(playerId, new Selection());
         }
-        
+
         return selections.get(playerId);
     }
-    
-    // Очистить выделение игрока
+
+    // Clear player's selection
     public void clearSelection(Player player) {
         selections.remove(player.getUUID());
     }

@@ -1,16 +1,16 @@
 package com.teleportapi;
 
 /**
- * Enum для определения типа грани параллелепипеда.
- * Каждая грань перпендикулярна одной из осей координат.
+ * Enum for defining the type of face of a cuboid.
+ * Each face is perpendicular to one of the coordinate axes.
  */
 public enum FaceType {
-    X_MIN("Левая грань (min X)"), // Левая грань (перпендикулярна оси X)
-    X_MAX("Правая грань (max X)"), // Правая грань (перпендикулярна оси X)
-    Y_MIN("Нижняя грань (min Y)"), // Нижняя грань (перпендикулярна оси Y)
-    Y_MAX("Верхняя грань (max Y)"), // Верхняя грань (перпендикулярна оси Y)
-    Z_MIN("Передняя грань (min Z)"), // Передняя грань (перпендикулярна оси Z)
-    Z_MAX("Задняя грань (max Z)"); // Задняя грань (перпендикулярна оси Z)
+    X_MIN("Left face (min X)"), // Left face (perpendicular to X axis)
+    X_MAX("Right face (max X)"), // Right face (perpendicular to X axis)
+    Y_MIN("Bottom face (min Y)"), // Bottom face (perpendicular to Y axis)
+    Y_MAX("Top face (max Y)"), // Top face (perpendicular to Y axis)
+    Z_MIN("Front face (min Z)"), // Front face (perpendicular to Z axis)
+    Z_MAX("Back face (max Z)"); // Back face (perpendicular to Z axis)
 
     private final String description;
 
@@ -23,21 +23,21 @@ public enum FaceType {
     }
 
     /**
-     * Проверяет, является ли эта грань минимальной (MIN) гранью
+     * Check if this is a minimum (MIN) face
      */
     public boolean isMinFace() {
         return this == X_MIN || this == Y_MIN || this == Z_MIN;
     }
 
     /**
-     * Проверяет, является ли эта грань максимальной (MAX) гранью
+     * Check if this is a maximum (MAX) face
      */
     public boolean isMaxFace() {
         return this == X_MAX || this == Y_MAX || this == Z_MAX;
     }
 
     /**
-     * Получить ось, к которой перпендикулярна эта грань
+     * Get the axis to which this face is perpendicular
      */
     public Axis getAxis() {
         if (this == X_MIN || this == X_MAX)

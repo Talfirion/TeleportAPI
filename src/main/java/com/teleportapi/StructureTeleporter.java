@@ -11,11 +11,11 @@ import java.util.List;
 
 public class StructureTeleporter {
 
-    // Класс для хранения информации о блоке
+    // Class for storing block information
     public static class BlockData {
-        public BlockPos relativePos; // Позиция относительно начальной точки
-        public BlockState blockState; // Состояние блока (тип блока + его данные)
-        public CompoundTag nbt; // Данные BlockEntity (сундуки и т.д.)
+        public BlockPos relativePos; // Position relative to starting point
+        public BlockState blockState; // Block state (block type + its data)
+        public CompoundTag nbt; // BlockEntity data (chests, etc.)
 
         public BlockData(BlockPos relativePos, BlockState blockState, CompoundTag nbt) {
             this.relativePos = relativePos;
@@ -24,7 +24,7 @@ public class StructureTeleporter {
         }
     }
 
-    // Метод для копирования структуры в память
+    // Method for copying structure to memory
     public static List<BlockData> copyStructure(Selection selection) {
         if (!selection.isComplete()) {
             return null;
@@ -36,57 +36,57 @@ public class StructureTeleporter {
         BlockPos max = selection.getMax();
         Level world = selection.getWorld();
 
-        // Проходим по всем блокам в выделенной области
+        // Iterate through all blocks in the selected region
         for (int x = min.getX(); x <= max.getX(); x++) {
             for (int y = min.getY(); y <= max.getY(); y++) {
                 for (int z = min.getZ(); z <= max.getZ(); z++) {
                     BlockPos pos = new BlockPos(x, y, z);
                     BlockState state = world.getBlockState(pos);
 
-                    // Получаем NBT данные, если есть (для сундуков и т.д.)
+                    // Get NBT data if available (for chests, etc.)
                     CompoundTag nbt = null;
                     BlockEntity blockEntity = world.getBlockEntity(pos);
                     if (blockEntity != null) {
                         nbt = blockEntity.saveWithFullMetadata();
-                        // Удаляем координаты из NBT, чтобы они не конфликтовали при вставке
+                        // Remove coordinates from NBT to avoid conflicts during pasting
                         nbt.remove("x");
                         nbt.remove("y");
                         nbt.remove("z");
                     }
 
-                    // Вычисляем относительную позицию (относительно минимальной точки)
+                    // Calculate relative position (relative to minimum point)
                     BlockPos relativePos = pos.subtract(min);
 
-                    // Сохраняем блок
+                    // Save block
                     blocks.add(new BlockData(relativePos, state, nbt));
                 }
             }
         }
 
-        TeleportAPI.LOGGER.info("Скопировано блоков: " + blocks.size());
+        TeleportAPI.LOGGER.info("Blocks copied: " + blocks.size());
         return blocks;
     }
 
-    // Метод для вставки структуры в новое место
+    // Method for pasting structure to a new location
     public static void pasteStructure(List<BlockData> blocks, BlockPos targetPos, Level world) {
         if (blocks == null || blocks.isEmpty()) {
-            TeleportAPI.LOGGER.warn("Нет блоков для вставки!");
+            TeleportAPI.LOGGER.warn("No blocks to paste!");
             return;
         }
 
-        // Вставляем каждый блок
+        // Paste each block
         for (BlockData blockData : blocks) {
-            // Вычисляем абсолютную позицию (целевая позиция + относительная)
+            // Calculate absolute position (target position + relative)
             BlockPos absolutePos = targetPos.offset(blockData.relativePos);
 
-            // Устанавливаем блок
+            // Set block
             world.setBlock(absolutePos, blockData.blockState, 3);
 
-            // Восстанавливаем NBT данные (если есть)
+            // Restore NBT data (if available)
             if (blockData.nbt != null) {
                 BlockEntity blockEntity = world.getBlockEntity(absolutePos);
                 if (blockEntity != null) {
-                    // Создаем копию NBT и обновляем координаты
+                    // Create NBT copy and update coordinates
                     CompoundTag tag = blockData.nbt.copy();
                     tag.putInt("x", absolutePos.getX());
                     tag.putInt("y", absolutePos.getY());
@@ -97,27 +97,27 @@ public class StructureTeleporter {
             }
         }
 
-        TeleportAPI.LOGGER.info("Вставлено блоков: " + blocks.size() + " в позицию " + targetPos);
+        TeleportAPI.LOGGER.info("Blocks pasted: " + blocks.size() + " at position " + targetPos);
     }
 
-    // Метод для телепортации структуры (удалить из старого места и вставить в
-    // новое)
+    // Method for teleporting structure (remove from old location and paste in
+    // new one)
     public static void teleportStructure(Selection selection, BlockPos targetPos) {
         if (!selection.isComplete()) {
-            TeleportAPI.LOGGER.warn("Выделение не завершено!");
+            TeleportAPI.LOGGER.warn("Selection not complete!");
             return;
         }
 
         Level world = selection.getWorld();
 
-        // 1. Копируем структуру
+        // 1. Copy structure
         List<BlockData> blocks = copyStructure(selection);
 
         if (blocks == null || blocks.isEmpty()) {
             return;
         }
 
-        // 2. Удаляем блоки из старого места (заменяем на воздух)
+        // 2. Remove blocks from old location (replace with air)
         BlockPos min = selection.getMin();
         BlockPos max = selection.getMax();
 
@@ -125,20 +125,20 @@ public class StructureTeleporter {
             for (int y = min.getY(); y <= max.getY(); y++) {
                 for (int z = min.getZ(); z <= max.getZ(); z++) {
                     BlockPos pos = new BlockPos(x, y, z);
-                    // Устанавливаем воздух (удаляем блок)
+                    // Set air (remove block)
                     world.removeBlock(pos, false);
                 }
             }
         }
 
-        // 3. Вставляем в новое место
+        // 3. Paste in new location
         pasteStructure(blocks, targetPos, world);
 
-        TeleportAPI.LOGGER.info("Структура телепортирована в " + targetPos);
+        TeleportAPI.LOGGER.info("Structure teleported to " + targetPos);
     }
 
     /**
-     * Телепортировать структуру, определенную двумя углами.
+     * Teleport structure defined by two corners.
      */
     public static void teleportByCorners(Level world, BlockPos p1, BlockPos p2, BlockPos targetPos) {
         Selection selection = new Selection();
@@ -148,7 +148,7 @@ public class StructureTeleporter {
     }
 
     /**
-     * Телепортировать структуру, определенную 6 точками.
+     * Teleport structure defined by 6 points.
      */
     public static void teleportBySixPoints(Level world, BlockPos[] points, BlockPos targetPos) {
         Selection selection = new Selection();

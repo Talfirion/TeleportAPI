@@ -7,24 +7,24 @@ import java.util.HashMap;
 import java.util.Map;
 
 /**
- * Класс для хранения информации о выделенной области.
- * Область определяется через 6 точек в пространстве - по одной для каждой грани
- * параллелепипеда.
- * Для axis-aligned box каждая точка определяет положение грани вдоль
- * соответствующей оси.
+ * Class for storing information about a selected region.
+ * The region is defined by 6 points in space - one for each face
+ * of the cuboid.
+ * For axis-aligned box, each point defines the position of a face along
+ * the corresponding axis.
  */
 public class Selection {
-    // Хранилище для точек граней параллелепипеда
+    // Storage for cuboid face points
     private Map<FaceType, BlockPos> facePoints = new HashMap<>();
 
-    // Мир, в котором сделано выделение
+    // World in which the selection was made
     private Level world;
 
     /**
-     * Установить точку для определенной грани параллелепипеда
+     * Set a point for a specific face of the cuboid
      * 
-     * @param faceType тип грани (X_MIN, X_MAX, Y_MIN, Y_MAX, Z_MIN, Z_MAX)
-     * @param point    точка в пространстве, через которую проходит грань
+     * @param faceType face type (X_MIN, X_MAX, Y_MIN, Y_MAX, Z_MIN, Z_MAX)
+     * @param point    point in space through which the face passes
      */
     public void setFacePoint(FaceType faceType, BlockPos point) {
         facePoints.put(faceType, point);
@@ -32,20 +32,20 @@ public class Selection {
     }
 
     /**
-     * Получить точку для определенной грани
+     * Get the point for a specific face
      */
     public BlockPos getFacePoint(FaceType faceType) {
         return facePoints.get(faceType);
     }
 
     /**
-     * Удалить точку для определенной грани
+     * Remove the point for a specific face
      */
     public void removeFacePoint(FaceType faceType) {
         facePoints.remove(faceType);
     }
 
-    // Геттеры для координат граней (для совместимости)
+    // Getters for face coordinates (for compatibility)
 
     public Integer getXMin() {
         BlockPos point = facePoints.get(FaceType.X_MIN);
@@ -77,7 +77,7 @@ public class Selection {
         return point != null ? point.getZ() : null;
     }
 
-    // Сеттеры для удобства (создают точки с нулевыми неиспользуемыми координатами)
+    // Setters for convenience (create points with zero unused coordinates)
 
     public void setXMin(int x) {
         setFacePoint(FaceType.X_MIN, new BlockPos(x, 0, 0));
@@ -111,7 +111,7 @@ public class Selection {
         this.world = world;
     }
 
-    // Валидация координат - проверка что min <= max для каждой оси
+    // Coordinate validation - check that min <= max for each axis
     private void validateCoordinates() {
         Integer xMin = getXMin();
         Integer xMax = getXMax();
@@ -121,22 +121,22 @@ public class Selection {
         Integer zMax = getZMax();
 
         if (xMin != null && xMax != null && xMin > xMax) {
-            TeleportAPI.LOGGER.warn("Внимание: xMin (" + xMin + ") > xMax (" + xMax + ")!");
+            TeleportAPI.LOGGER.warn("Warning: xMin (" + xMin + ") > xMax (" + xMax + ")!");
         }
         if (yMin != null && yMax != null && yMin > yMax) {
-            TeleportAPI.LOGGER.warn("Внимание: yMin (" + yMin + ") > yMax (" + yMax + ")!");
+            TeleportAPI.LOGGER.warn("Warning: yMin (" + yMin + ") > yMax (" + yMax + ")!");
         }
         if (zMin != null && zMax != null && zMin > zMax) {
-            TeleportAPI.LOGGER.warn("Внимание: zMin (" + zMin + ") > zMax (" + zMax + ")!");
+            TeleportAPI.LOGGER.warn("Warning: zMin (" + zMin + ") > zMax (" + zMax + ")!");
         }
     }
 
-    // Проверка, что все стороны установлены
+    // Check that all sides are set
     public boolean isComplete() {
         return facePoints.size() == 6 && world != null;
     }
 
-    // Получить минимальную точку (левый нижний передний угол)
+    // Get the minimum point (bottom left front corner)
     public BlockPos getMin() {
         if (!isComplete())
             return null;
@@ -154,7 +154,7 @@ public class Selection {
                 Math.min(zMin, zMax));
     }
 
-    // Получить максимальную точку (правый верхний задний угол)
+    // Get the maximum point (top right back corner)
     public BlockPos getMax() {
         if (!isComplete())
             return null;
@@ -172,7 +172,7 @@ public class Selection {
                 Math.max(zMin, zMax));
     }
 
-    // Получить размер выделенной области (объём в блоках)
+    // Get the size of the selected region (volume in blocks)
     public int getVolume() {
         if (!isComplete())
             return 0;
@@ -191,10 +191,10 @@ public class Selection {
         return sizeX * sizeY * sizeZ;
     }
 
-    // Метод для вывода информации о выделении
+    // Method for displaying information about the selection
     public String getInfo() {
         if (!isComplete()) {
-            return "Выделение не завершено. Установлено граней: " + facePoints.size() + "/6";
+            return "Selection incomplete. Faces set: " + facePoints.size() + "/6";
         }
 
         Integer xMin = getXMin();
@@ -205,10 +205,10 @@ public class Selection {
         Integer zMax = getZMax();
 
         StringBuilder info = new StringBuilder();
-        info.append(String.format("Выделение: X[%d..%d] Y[%d..%d] Z[%d..%d], Объём: %d блоков\n",
+        info.append(String.format("Selection: X[%d..%d] Y[%d..%d] Z[%d..%d], Volume: %d blocks\n",
                 xMin, xMax, yMin, yMax, zMin, zMax, getVolume()));
 
-        info.append("Точки граней:\n");
+        info.append("Face points:\n");
         for (FaceType faceType : FaceType.values()) {
             BlockPos point = facePoints.get(faceType);
             if (point != null) {
@@ -219,33 +219,33 @@ public class Selection {
         return info.toString();
     }
 
-    // Метод для сброса всех сторон
+    // Method to reset all sides
     public void reset() {
         facePoints.clear();
         world = null;
     }
 
     /**
-     * Получить количество установленных граней
+     * Get the number of faces set
      */
     public int getSetFacesCount() {
         return facePoints.size();
     }
 
     /**
-     * Установить выделение из произвольных точек в пространстве.
-     * Метод автоматически вычисляет минимальные и максимальные координаты,
-     * и формирует axis-aligned bounding box (параллелепипед).
+     * Set selection from arbitrary points in space.
+     * The method automatically calculates minimum and maximum coordinates,
+     * and forms an axis-aligned bounding box (cuboid).
      * 
-     * @param points массив точек (обычно 6 точек, но может быть любое количество)
-     * @throws IllegalArgumentException если массив пустой или null
+     * @param points array of points (usually 6 points, but can be any number)
+     * @throws IllegalArgumentException if array is empty or null
      */
     public void setFromPoints(BlockPos... points) {
         if (points == null || points.length == 0) {
-            throw new IllegalArgumentException("Массив точек не может быть пустым!");
+            throw new IllegalArgumentException("Points array cannot be empty!");
         }
 
-        // Инициализируем min/max первой точкой
+        // Initialize min/max with first point
         int minX = points[0].getX();
         int maxX = points[0].getX();
         int minY = points[0].getY();
@@ -253,7 +253,7 @@ public class Selection {
         int minZ = points[0].getZ();
         int maxZ = points[0].getZ();
 
-        // Проходим по всем остальным точкам и находим минимумы/максимумы
+        // Iterate through all remaining points and find minimums/maximums
         for (int i = 1; i < points.length; i++) {
             BlockPos point = points[i];
 
@@ -273,8 +273,8 @@ public class Selection {
                 maxZ = point.getZ();
         }
 
-        // Устанавливаем грани найденными координатами
-        // Используем сами точки для хранения полной информации
+        // Set faces with found coordinates
+        // Use the points themselves to store complete information
         setFacePoint(FaceType.X_MIN, new BlockPos(minX, minY, minZ));
         setFacePoint(FaceType.X_MAX, new BlockPos(maxX, maxY, maxZ));
         setFacePoint(FaceType.Y_MIN, new BlockPos(minX, minY, minZ));
@@ -283,20 +283,20 @@ public class Selection {
         setFacePoint(FaceType.Z_MAX, new BlockPos(maxX, maxY, maxZ));
 
         TeleportAPI.LOGGER.info(String.format(
-                "Построен параллелепипед из %d точек: X[%d..%d] Y[%d..%d] Z[%d..%d]",
+                "Built cuboid from %d points: X[%d..%d] Y[%d..%d] Z[%d..%d]",
                 points.length, minX, maxX, minY, maxY, minZ, maxZ));
     }
 
     /**
-     * Установить выделение по двум точкам (углам).
-     * Это классический способ выделения региона (как в WorldEdit).
+     * Set selection from two points (corners).
+     * This is the classic way of selecting a region (like in WorldEdit).
      * 
-     * @param p1 Первая точка
-     * @param p2 Вторая точка
+     * @param p1 First point
+     * @param p2 Second point
      */
     public void setFromCorners(BlockPos p1, BlockPos p2) {
         if (p1 == null || p2 == null) {
-            throw new IllegalArgumentException("Точки не могут быть null!");
+            throw new IllegalArgumentException("Points cannot be null!");
         }
 
         int minX = Math.min(p1.getX(), p2.getX());
@@ -315,23 +315,23 @@ public class Selection {
     }
 
     /**
-     * Установить выделение по 6 точкам.
-     * Требуется ровно 6 точек.
+     * Set selection from 6 points.
+     * Exactly 6 points are required.
      * 
-     * @param points Массив из 6 точек
+     * @param points Array of 6 points
      */
     public void setFromSixPoints(BlockPos... points) {
         if (points == null || points.length != 6) {
-            throw new IllegalArgumentException("Требуется ровно 6 точек!");
+            throw new IllegalArgumentException("Exactly 6 points are required!");
         }
         setFromPoints(points);
     }
 
     /**
-     * Установить выделение из произвольных точек в пространстве с указанием мира.
+     * Set selection from arbitrary points in space with world specification.
      * 
-     * @param world  мир, в котором находится выделение
-     * @param points массив точек
+     * @param world  world in which the selection is located
+     * @param points array of points
      */
     public void setFromPoints(Level world, BlockPos... points) {
         this.world = world;
