@@ -1,0 +1,28 @@
+modLoader="javafml"
+loaderVersion="[47,)"
+license="MIT"
+
+[[mods]]
+modId="teleportapi"
+version="1.0.0"
+displayName="TeleportAPI"
+logoFile="logo.png"
+credits="Created for structure teleportation"
+authors="YourName"
+description="""
+Library for teleporting large structures in Minecraft.
+"""
+
+[[dependencies.teleportapi]]
+    modId="forge"
+    mandatory=true
+    versionRange="[47,)"
+    ordering="NONE"
+    side="BOTH"
+
+[[dependencies.teleportapi]]
+    modId="minecraft"
+    mandatory=true
+    versionRange="[1.20.1,1.21)"
+    ordering="NONE"
+    side="BOTH"
