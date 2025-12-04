@@ -24,5 +24,8 @@ run
 # Files from Forge MDK
 forge*changelog.txt
 
+<<<<<<< HEAD
 
+=======
+>>>>>>> main
 logs
