@@ -13,9 +13,9 @@ apply plugin: 'eclipse'
 apply plugin: 'maven-publish'
 apply plugin: 'java'
 
-version = '1.0.0'
-group = 'com.teleportapi'
-archivesBaseName = 'teleportapi'
+version = mod_version
+group = mod_group_id
+archivesBaseName = mod_id
 
 java.toolchain.languageVersion = JavaLanguageVersion.of(17)
 
