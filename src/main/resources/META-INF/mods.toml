@@ -8,7 +8,7 @@ version="1.0.0"
 displayName="TeleportAPI"
 logoFile="logo.png"
 credits="Created for structure teleportation"
-authors="YourName"
+authors="Talfirion" 
 description="""
 Library for teleporting large structures in Minecraft.
 """
