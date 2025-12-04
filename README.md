@@ -24,55 +24,180 @@ dependencies {
 
 ### Selection
 
-Represents a selected region in the world. Supports multiple definition methods:
+Represents a selected region in the world. This class stores the boundaries of a cuboid 
+(3D box) by tracking the minimum and maximum coordinates on each axis (X, Y, Z).
 
-#### Method 1: From Two Corners
+**How it works internally:**
+- Selection stores 6 face points (one for each side of a cube)
+- Each face is identified by FaceType enum (X_MIN, X_MAX, Y_MIN, Y_MAX, Z_MIN, Z_MAX)
+- When you provide points, Selection automatically finds the min/max coordinates
+- It validates that min ≤ max for each axis (warns if you set them incorrectly)
+
+---
+
+## Method 1: From Two Corners (Most Common - Like WorldEdit)
+
 ```java
 Selection selection = new Selection();
 selection.setWorld(level);
 selection.setFromCorners(
-    new BlockPos(0, 64, 0),
-    new BlockPos(10, 74, 10)
+    new BlockPos(0, 64, 0),      // First corner (any diagonal point)
+    new BlockPos(10, 74, 10)     // Second corner (opposite diagonal point)
 );
 ```
 
-#### Method 2: From Any Number of Points
+**What happens:**
+1. You provide two diagonal corners of the cuboid (doesn't matter which is bigger)
+2. Method compares all coordinates:
+   - `Math.min(0, 10)` = 0 → stored as X_MIN
+   - `Math.max(0, 10)` = 10 → stored as X_MAX
+   - Same for Y and Z axes
+3. Results:
+   - X_MIN = 0, X_MAX = 10
+   - Y_MIN = 64, Y_MAX = 74
+   - Z_MIN = 0, Z_MAX = 10
+
+**Best for:** Quick region selection with just 2 clicks
+
+---
+
+## Method 2: From Any Number of Points (Flexible)
+
 ```java
 Selection selection = new Selection();
 selection.setWorld(level);
 selection.setFromPoints(
-    new BlockPos(5, 70, 5),
-    new BlockPos(2, 68, 3),
-    new BlockPos(8, 72, 9)
+    new BlockPos(5, 70, 5),      // Point 1
+    new BlockPos(2, 68, 3),      // Point 2
+    new BlockPos(8, 72, 9)       // Point 3 (can be any amount)
 );
 ```
 
-#### Method 3: From Exactly Six Points
+**What happens:**
+1. Method iterates through ALL provided points
+2. For each coordinate axis, finds minimum and maximum:
+   ```
+   X values: 5, 2, 8 → min=2, max=8
+   Y values: 70, 68, 72 → min=68, max=72
+   Z values: 5, 3, 9 → min=3, max=9
+   ```
+3. Creates bounding box that contains all points
+4. Results:
+   - X_MIN = 2, X_MAX = 8
+   - Y_MIN = 68, Y_MAX = 72
+   - Z_MIN = 3, Z_MAX = 9
+
+**Best for:** When you have scattered points and need to find the smallest box containing all of them
+
+---
+
+## Method 3: From Exactly Six Points (Advanced/Flexible Input)
+
 ```java
 Selection selection = new Selection();
 selection.setWorld(level);
 selection.setFromSixPoints(
-    new BlockPos(10, 65, 35),
-    new BlockPos(20, 70, 40),
-    new BlockPos(15, 64, 38),
-    new BlockPos(12, 80, 42),
-    new BlockPos(18, 72, 30),
-    new BlockPos(14, 68, 50)
+    new BlockPos(10, 65, 35),    // Point 1
+    new BlockPos(20, 70, 40),    // Point 2
+    new BlockPos(15, 64, 38),    // Point 3
+    new BlockPos(12, 80, 42),    // Point 4
+    new BlockPos(18, 72, 30),    // Point 5
+    new BlockPos(14, 68, 50)     // Point 6
 );
 ```
 
-#### Method 4: Set Individual Face Points
+**What happens:**
+1. Requires EXACTLY 6 points (throws exception if not 6)
+2. Internally calls `setFromPoints()` - same logic as Method 2
+3. Finds min/max for all axes from these 6 points:
+   ```
+   X values: 10, 20, 15, 12, 18, 14 → min=10, max=20
+   Y values: 65, 70, 64, 80, 72, 68 → min=64, max=80
+   Z values: 35, 40, 38, 42, 30, 50 → min=30, max=50
+   ```
+
+**Best for:** API consistency when you know you have exactly 6 points
+
+---
+
+## Method 4: Set Individual Face Points (Manual/Direct Control)
+
 ```java
 Selection selection = new Selection();
 selection.setWorld(level);
 
-selection.setFacePoint(FaceType.X_MIN, new BlockPos(10, 65, 35));
-selection.setFacePoint(FaceType.X_MAX, new BlockPos(20, 70, 40));
-selection.setFacePoint(FaceType.Y_MIN, new BlockPos(15, 64, 38));
-selection.setFacePoint(FaceType.Y_MAX, new BlockPos(12, 80, 42));
-selection.setFacePoint(FaceType.Z_MIN, new BlockPos(18, 72, 30));
-selection.setFacePoint(FaceType.Z_MAX, new BlockPos(14, 68, 50));
+// Manually set each side of the cuboid
+selection.setFacePoint(FaceType.X_MIN, new BlockPos(10, 65, 35));  // Left face
+selection.setFacePoint(FaceType.X_MAX, new BlockPos(20, 70, 40));  // Right face
+selection.setFacePoint(FaceType.Y_MIN, new BlockPos(15, 64, 38));  // Bottom face
+selection.setFacePoint(FaceType.Y_MAX, new BlockPos(12, 80, 42));  // Top face
+selection.setFacePoint(FaceType.Z_MIN, new BlockPos(18, 72, 30));  // Front face
+selection.setFacePoint(FaceType.Z_MAX, new BlockPos(14, 68, 50));  // Back face
 ```
+
+**What happens:**
+1. You directly assign a point to each face type
+2. Each call validates coordinates (warns if min > max)
+3. No automatic min/max calculation - you control everything
+4. **⚠️ WARNING:** You can make invalid selections if you're not careful!
+   ```java
+   selection.setXMin(20);  // Left face at X=20
+   selection.setXMax(10);  // Right face at X=10
+   // ERROR! Left is now to the right of right!
+   ```
+
+**Best for:** Advanced use cases where you need precise manual control
+
+---
+
+## Working with Selections
+
+```java
+// Check if all 6 faces are defined and world is set
+if (selection.isComplete()) {
+    // Get the minimum corner (lowest X, Y, Z)
+    BlockPos min = selection.getMin();  // e.g., BlockPos(10, 64, 30)
+    
+    // Get the maximum corner (highest X, Y, Z)
+    BlockPos max = selection.getMax();  // e.g., BlockPos(20, 80, 50)
+    
+    // Calculate total volume in blocks
+    int volume = selection.getVolume(); 
+    // volume = (20-10+1) * (80-64+1) * (50-30+1)
+    //        = 11 * 17 * 21 = 3,927 blocks
+    
+    // Get formatted info string for display
+    String info = selection.getInfo();
+    // Output example:
+    // "Selection: X[10..20] Y[64..80] Z[30..50], Volume: 3927 blocks
+    //  Face points:
+    //    Left face (min X): 10, 65, 35
+    //    Right face (max X): 20, 70, 40
+    //    ..."
+}
+
+// Get count of how many faces are currently set (0-6)
+int facesSet = selection.getSetFacesCount();
+if (facesSet < 6) {
+    System.out.println("Selection incomplete: " + facesSet + "/6 faces set");
+}
+
+// Clear everything and start over
+selection.reset();  // Clears all faces and world reference
+```
+
+---
+
+## Why These Methods Exist
+
+| Method | Use Case | Input | Auto-calculates min/max? |
+|--------|----------|-------|------------------------|
+| **From Two Corners** | Quick box selection | 2 diagonal points | ✅ Yes |
+| **From Any Points** | Flexible bounding box | 2-N scattered points | ✅ Yes |
+| **From Six Points** | Structured input | Exactly 6 points | ✅ Yes |
+| **Manual Faces** | Precise control | 6 points with face names | ❌ No (you control it) |
+
+**Recommendation for your users:** Start with **Method 1 (Two Corners)** - it's simplest and most intuitive.
 
 #### Working with Selections
 ```java
@@ -274,12 +399,12 @@ The API automatically preserves:
 ### What Gets Copied
 
 When teleporting a structure, the API copies:
-- âœ“ All block types and their states
-- âœ“ Chest contents
-- âœ“ Sign text
-- âœ“ All tile entity NBT data
-- âœ“ Custom block properties
-
+- All block types and their states
+- Chest contents
+- Sign text
+- All tile entity NBT data
+- Custom block properties
+/
 ## API Reference
 
 | Class | Purpose |

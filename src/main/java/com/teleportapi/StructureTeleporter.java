@@ -25,6 +25,7 @@ public class StructureTeleporter {
     }
 
     // Method for copying structure to memory
+
     public static List<BlockData> copyStructure(Selection selection) {
         if (!selection.isComplete()) {
             return null;
@@ -68,6 +69,7 @@ public class StructureTeleporter {
     }
 
     // Method for pasting structure to a new location
+    @SuppressWarnings("null")
     public static void pasteStructure(List<BlockData> blocks, BlockPos targetPos, Level world) {
         if (blocks == null || blocks.isEmpty()) {
             TeleportAPI.LOGGER.warn("No blocks to paste!");
@@ -84,6 +86,7 @@ public class StructureTeleporter {
 
             // Restore NBT data (if available)
             if (blockData.nbt != null) {
+
                 BlockEntity blockEntity = world.getBlockEntity(absolutePos);
                 if (blockEntity != null) {
                     // Create NBT copy and update coordinates
