@@ -265,7 +265,7 @@ class StructureTeleporterEdgeCaseTest {
         // Should create a 1x1x1 selection
         assertDoesNotThrow(() -> {
             try {
-                StructureTeleporter.teleportByCorners(null, point, point, target);
+                StructureTeleporter.teleportByCorners(null, point, point, target, false);
             } catch (NullPointerException e) {
                 // Expected due to null world
             }
@@ -281,7 +281,7 @@ class StructureTeleporterEdgeCaseTest {
         // Should handle extreme target distances
         assertDoesNotThrow(() -> {
             try {
-                StructureTeleporter.teleportByCorners(null, p1, p2, farTarget);
+                StructureTeleporter.teleportByCorners(null, p1, p2, farTarget, false);
             } catch (NullPointerException e) {
                 // Expected due to null world
             }
