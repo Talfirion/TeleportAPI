@@ -130,7 +130,7 @@ class StructureTeleporterTest {
         // and that it attempts to create a Selection
         assertDoesNotThrow(() -> {
             try {
-                StructureTeleporter.teleportByCorners(null, p1, p2, target);
+                StructureTeleporter.teleportByCorners(null, p1, p2, target, false);
             } catch (NullPointerException e) {
                 // Expected due to null world
             }
