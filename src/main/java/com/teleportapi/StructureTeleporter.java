@@ -14,6 +14,12 @@ import java.util.Set;
 
 public class StructureTeleporter {
 
+    public enum PasteMode {
+        FORCE_REPLACE, // Replace all blocks at destination (default)
+        PRESERVE_LIST, // Replace all except blocks in the preserved list
+        PRESERVE_EXISTING // Do not replace any existing non-air blocks
+    }
+
     // Class for storing block information
     public static class BlockData {
         public BlockPos relativePos; // Position relative to starting point
@@ -61,6 +67,46 @@ public class StructureTeleporter {
             }
         }
         return false;
+    }
+
+    /**
+     * Check if a block at the target should be replaced by the incoming block based
+     * on the mode.
+     */
+    @SuppressWarnings("null")
+    private static boolean shouldReplace(BlockState existing, BlockState incoming, PasteMode mode,
+            List<BlockState> preservedBlocks) {
+        // If incoming is air, usually we might still want to replace if we are moving
+        // (clearing space),
+        // but typically structure paste might want to avoid pasting air over blocks
+        // unless intentional.
+        // However, based on "teleport", we are moving the *source* to the *target*.
+        // If source is air, we generally don't copy air blocks in copyStructure unless
+        // specifically handled?
+        // Wait, copyStructure iterates all blocks.
+        // Let's assume we want to apply the mode logic.
+
+        if (mode == PasteMode.FORCE_REPLACE) {
+            return true;
+        }
+
+        if (mode == PasteMode.PRESERVE_EXISTING) {
+            // Don't replace if existing is not air
+            return existing.isAir();
+        }
+
+        if (mode == PasteMode.PRESERVE_LIST) {
+            if (preservedBlocks != null) {
+                for (BlockState preserved : preservedBlocks) {
+                    if (existing.is(preserved.getBlock())) {
+                        return false;
+                    }
+                }
+            }
+            return true;
+        }
+
+        return true;
     }
 
     // Method for copying structure to memory
@@ -130,6 +176,12 @@ public class StructureTeleporter {
     @SuppressWarnings("null")
     public static void pasteStructure(List<BlockData> blocks, BlockPos targetPos, Level world,
             List<BlockState> excludedBlocks) {
+        pasteStructure(blocks, targetPos, world, PasteMode.FORCE_REPLACE, null);
+    }
+
+    @SuppressWarnings("null")
+    public static void pasteStructure(List<BlockData> blocks, BlockPos targetPos, Level world,
+            PasteMode mode, List<BlockState> preservedBlocks) {
         if (blocks == null || blocks.isEmpty()) {
             TeleportAPI.LOGGER.warn("No blocks to paste!");
             return;
@@ -139,9 +191,14 @@ public class StructureTeleporter {
         for (BlockData blockData : blocks) {
             // Calculate absolute position (target position + relative)
             BlockPos absolutePos = targetPos.offset(blockData.relativePos);
+            BlockState existingState = world.getBlockState(absolutePos);
 
-            // Set block
-            world.setBlock(absolutePos, blockData.blockState, 3);
+            if (shouldReplace(existingState, blockData.blockState, mode, preservedBlocks)) {
+                // Set block
+                world.setBlock(absolutePos, blockData.blockState, 3);
+            } else {
+                continue; // Skip NBT restoration if block wasn't replaced
+            }
 
             // Restore NBT data (if available)
             if (blockData.nbt != null) {
@@ -176,11 +233,19 @@ public class StructureTeleporter {
     public static TeleportResult teleportStructure(Selection selection, BlockPos targetPos,
             List<BlockState> excludedBlocks, boolean shouldTeleport, boolean checkExclusions) {
         return teleportStructure(selection, selection.getWorld(), targetPos, excludedBlocks, shouldTeleport,
-                checkExclusions);
+                checkExclusions, PasteMode.FORCE_REPLACE, null);
+    }
+
+    public static TeleportResult teleportStructure(Selection selection, Level targetLevel,
+            BlockPos targetPos, List<BlockState> excludedBlocks, boolean shouldTeleport,
+            boolean checkExclusions) {
+        return teleportStructure(selection, targetLevel, targetPos, excludedBlocks, shouldTeleport, checkExclusions,
+                PasteMode.FORCE_REPLACE, null);
     }
 
     public static TeleportResult teleportStructure(Selection selection, Level targetLevel, BlockPos targetPos,
-            List<BlockState> excludedBlocks, boolean shouldTeleport, boolean checkExclusions) {
+            List<BlockState> excludedBlocks, boolean shouldTeleport, boolean checkExclusions,
+            PasteMode pasteMode, List<BlockState> preservedBlocks) {
         if (!selection.isComplete()) {
             TeleportAPI.LOGGER.warn("Selection not complete!");
             return new TeleportResult(false, 0, 0, new HashSet<>(),
@@ -197,6 +262,8 @@ public class StructureTeleporter {
         // Count total blocks in selection
         int totalBlocks = 0;
         int excludedCount = 0;
+        int replacedCount = 0;
+        int skippedCount = 0;
         Set<BlockState> excludedTypes = new HashSet<>();
 
         // First pass: count blocks and excluded blocks
@@ -222,12 +289,44 @@ public class StructureTeleporter {
                     .append(excludedTypes.size()).append(" type(s). ");
         }
 
+        // Calculate potential replacements
+        // Note: Re-calculating this during the copy phase or doing a pre-scan of target
+        // area?
+        // Since we need to report it before teleporting if shouldTeleport is false
+        // (feedback).
+
+        // For the purpose of feedback, we need to iterate the target area corresponding
+        // to source blocks
+        for (int x = min.getX(); x <= max.getX(); x++) {
+            for (int y = min.getY(); y <= max.getY(); y++) {
+                for (int z = min.getZ(); z <= max.getZ(); z++) {
+                    BlockPos srcPos = new BlockPos(x, y, z);
+                    BlockState srcState = sourceWorld.getBlockState(srcPos);
+
+                    if (!isExcluded(srcState, excludedBlocks, checkExclusions)) {
+                        // Check target
+                        BlockPos relPos = srcPos.subtract(min);
+                        @SuppressWarnings("null")
+                        BlockPos dstPos = targetPos.offset(relPos);
+                        @SuppressWarnings("null")
+                        BlockState dstState = targetLevel.getBlockState(dstPos);
+
+                        if (shouldReplace(dstState, srcState, pasteMode, preservedBlocks)) {
+                            replacedCount++;
+                        } else {
+                            skippedCount++;
+                        }
+                    }
+                }
+            }
+        }
+
         // If shouldTeleport is false, just return the scan results
         if (!shouldTeleport) {
             message.append("Teleportation was not performed (shouldTeleport=false).");
             TeleportAPI.LOGGER.info(message.toString());
             return new TeleportResult(true, totalBlocks, excludedCount, excludedTypes,
-                    message.toString(), false);
+                    message.toString(), false, replacedCount, skippedCount);
         }
 
         // 1. Copy structure (this will skip excluded blocks)
@@ -235,7 +334,7 @@ public class StructureTeleporter {
 
         if (blocks == null || blocks.isEmpty()) {
             return new TeleportResult(false, totalBlocks, excludedCount, excludedTypes,
-                    "No blocks to teleport after exclusions", false);
+                    "No blocks to teleport after exclusions", false, 0, 0);
         }
 
         // 2. Remove blocks from old location (but keep excluded blocks)
@@ -254,7 +353,8 @@ public class StructureTeleporter {
         }
 
         // 3. Paste in new location
-        pasteStructure(blocks, targetPos, targetLevel, excludedBlocks);
+        // 3. Paste in new location
+        pasteStructure(blocks, targetPos, targetLevel, pasteMode, preservedBlocks);
 
         message.append("Structure teleported successfully. ")
                 .append(blocks.size()).append(" block(s) moved to ").append(targetPos).append(".");
@@ -262,7 +362,7 @@ public class StructureTeleporter {
         TeleportAPI.LOGGER.info(message.toString());
 
         return new TeleportResult(true, totalBlocks, excludedCount, excludedTypes,
-                message.toString(), true);
+                message.toString(), true, replacedCount, skippedCount);
     }
 
     /**

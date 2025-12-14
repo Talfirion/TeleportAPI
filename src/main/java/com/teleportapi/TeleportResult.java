@@ -19,15 +19,25 @@ public class TeleportResult {
     private final Set<BlockState> excludedBlockTypes;
     private final String message;
     private final boolean teleported;
+    private final int replacedBlockCount;
+    private final int skippedBlockCount;
 
     public TeleportResult(boolean success, int totalBlocks, int excludedBlocks,
             Set<BlockState> excludedBlockTypes, String message, boolean teleported) {
+        this(success, totalBlocks, excludedBlocks, excludedBlockTypes, message, teleported, 0, 0);
+    }
+
+    public TeleportResult(boolean success, int totalBlocks, int excludedBlocks,
+            Set<BlockState> excludedBlockTypes, String message, boolean teleported,
+            int replacedBlockCount, int skippedBlockCount) {
         this.success = success;
         this.totalBlocks = totalBlocks;
         this.excludedBlocks = excludedBlocks;
         this.excludedBlockTypes = new HashSet<>(excludedBlockTypes);
         this.message = message;
         this.teleported = teleported;
+        this.replacedBlockCount = replacedBlockCount;
+        this.skippedBlockCount = skippedBlockCount;
     }
 
     public boolean isSuccess() {
@@ -58,6 +68,14 @@ public class TeleportResult {
         return totalBlocks - excludedBlocks;
     }
 
+    public int getReplacedBlockCount() {
+        return replacedBlockCount;
+    }
+
+    public int getSkippedBlockCount() {
+        return skippedBlockCount;
+    }
+
     @Override
     public String toString() {
         StringBuilder sb = new StringBuilder();
@@ -67,6 +85,8 @@ public class TeleportResult {
         sb.append(", totalBlocks=").append(totalBlocks);
         sb.append(", excludedBlocks=").append(excludedBlocks);
         sb.append(", teleportedBlocks=").append(getTeleportedBlocks());
+        sb.append(", replacedBlocks=").append(replacedBlockCount);
+        sb.append(", skippedBlocks=").append(skippedBlockCount);
         if (excludedBlocks > 0) {
             sb.append(", excludedBlockTypes=").append(excludedBlockTypes.size()).append(" types");
         }
