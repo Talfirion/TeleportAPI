@@ -272,6 +272,10 @@ public class StructureTeleporter {
                 for (int z = min.getZ(); z <= max.getZ(); z++) {
                     BlockPos pos = new BlockPos(x, y, z);
                     BlockState state = sourceWorld.getBlockState(pos);
+
+                    if (state.isAir()) {
+                        continue;
+                    }
                     totalBlocks++;
 
                     if (isExcluded(state, excludedBlocks, checkExclusions)) {
@@ -302,6 +306,10 @@ public class StructureTeleporter {
                 for (int z = min.getZ(); z <= max.getZ(); z++) {
                     BlockPos srcPos = new BlockPos(x, y, z);
                     BlockState srcState = sourceWorld.getBlockState(srcPos);
+
+                    if (srcState.isAir()) {
+                        continue;
+                    }
 
                     if (!isExcluded(srcState, excludedBlocks, checkExclusions)) {
                         // Check target
@@ -357,7 +365,7 @@ public class StructureTeleporter {
         pasteStructure(blocks, targetPos, targetLevel, pasteMode, preservedBlocks);
 
         message.append("Structure teleported successfully. ")
-                .append(blocks.size()).append(" block(s) moved to ").append(targetPos).append(".");
+                .append(totalBlocks - excludedCount).append(" block(s) moved to ").append(targetPos).append(".");
 
         TeleportAPI.LOGGER.info(message.toString());
 
