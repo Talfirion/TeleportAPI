@@ -3,9 +3,10 @@ package com.teleportapi;
 import net.minecraft.world.level.block.state.BlockState;
 
 import java.util.Collections;
-
-import java.util.Set;
+import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Map;
+import java.util.Set;
 
 /**
  * Class for storing teleportation results.
@@ -21,15 +22,26 @@ public class TeleportResult {
     private final boolean teleported;
     private final int replacedBlockCount;
     private final int skippedBlockCount;
+    private final Map<BlockState, Integer> replacedBlocksMap;
+    private final Map<BlockState, Integer> skippedBlocksMap;
 
     public TeleportResult(boolean success, int totalBlocks, int excludedBlocks,
             Set<BlockState> excludedBlockTypes, String message, boolean teleported) {
-        this(success, totalBlocks, excludedBlocks, excludedBlockTypes, message, teleported, 0, 0);
+        this(success, totalBlocks, excludedBlocks, excludedBlockTypes, message, teleported, 0, 0,
+                new HashMap<>(), new HashMap<>());
     }
 
     public TeleportResult(boolean success, int totalBlocks, int excludedBlocks,
             Set<BlockState> excludedBlockTypes, String message, boolean teleported,
             int replacedBlockCount, int skippedBlockCount) {
+        this(success, totalBlocks, excludedBlocks, excludedBlockTypes, message, teleported,
+                replacedBlockCount, skippedBlockCount, new HashMap<>(), new HashMap<>());
+    }
+
+    public TeleportResult(boolean success, int totalBlocks, int excludedBlocks,
+            Set<BlockState> excludedBlockTypes, String message, boolean teleported,
+            int replacedBlockCount, int skippedBlockCount,
+            Map<BlockState, Integer> replacedBlocksMap, Map<BlockState, Integer> skippedBlocksMap) {
         this.success = success;
         this.totalBlocks = totalBlocks;
         this.excludedBlocks = excludedBlocks;
@@ -38,6 +50,8 @@ public class TeleportResult {
         this.teleported = teleported;
         this.replacedBlockCount = replacedBlockCount;
         this.skippedBlockCount = skippedBlockCount;
+        this.replacedBlocksMap = replacedBlocksMap != null ? new HashMap<>(replacedBlocksMap) : new HashMap<>();
+        this.skippedBlocksMap = skippedBlocksMap != null ? new HashMap<>(skippedBlocksMap) : new HashMap<>();
     }
 
     public boolean isSuccess() {
@@ -74,6 +88,14 @@ public class TeleportResult {
 
     public int getSkippedBlockCount() {
         return skippedBlockCount;
+    }
+
+    public Map<BlockState, Integer> getReplacedBlocksMap() {
+        return Collections.unmodifiableMap(replacedBlocksMap);
+    }
+
+    public Map<BlockState, Integer> getSkippedBlocksMap() {
+        return Collections.unmodifiableMap(skippedBlocksMap);
     }
 
     @Override
