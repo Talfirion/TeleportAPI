@@ -8,8 +8,10 @@ import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 public class StructureTeleporter {
@@ -121,6 +123,11 @@ public class StructureTeleporter {
 
     public static List<BlockData> copyStructure(Selection selection, List<BlockState> excludedBlocks,
             boolean checkExclusions) {
+        return copyStructure(selection, excludedBlocks, checkExclusions, true);
+    }
+
+    public static List<BlockData> copyStructure(Selection selection, List<BlockState> excludedBlocks,
+            boolean checkExclusions, boolean includeAir) {
         if (!selection.isComplete()) {
             return null;
         }
@@ -137,6 +144,11 @@ public class StructureTeleporter {
                 for (int z = min.getZ(); z <= max.getZ(); z++) {
                     BlockPos pos = new BlockPos(x, y, z);
                     BlockState state = world.getBlockState(pos);
+
+                    // Skip air if not included
+                    if (!includeAir && state.isAir()) {
+                        continue;
+                    }
 
                     // Skip excluded blocks
                     if (isExcluded(state, excludedBlocks, checkExclusions)) {
@@ -233,19 +245,27 @@ public class StructureTeleporter {
     public static TeleportResult teleportStructure(Selection selection, BlockPos targetPos,
             List<BlockState> excludedBlocks, boolean shouldTeleport, boolean checkExclusions) {
         return teleportStructure(selection, selection.getWorld(), targetPos, excludedBlocks, shouldTeleport,
-                checkExclusions, PasteMode.FORCE_REPLACE, null);
+                checkExclusions, PasteMode.FORCE_REPLACE, null, true);
     }
 
     public static TeleportResult teleportStructure(Selection selection, Level targetLevel,
             BlockPos targetPos, List<BlockState> excludedBlocks, boolean shouldTeleport,
             boolean checkExclusions) {
         return teleportStructure(selection, targetLevel, targetPos, excludedBlocks, shouldTeleport, checkExclusions,
-                PasteMode.FORCE_REPLACE, null);
+                PasteMode.FORCE_REPLACE, null, true);
     }
 
     public static TeleportResult teleportStructure(Selection selection, Level targetLevel, BlockPos targetPos,
             List<BlockState> excludedBlocks, boolean shouldTeleport, boolean checkExclusions,
             PasteMode pasteMode, List<BlockState> preservedBlocks) {
+        return teleportStructure(selection, targetLevel, targetPos, excludedBlocks, shouldTeleport, checkExclusions,
+                pasteMode, preservedBlocks, true);
+    }
+
+    @SuppressWarnings("null")
+    public static TeleportResult teleportStructure(Selection selection, Level targetLevel, BlockPos targetPos,
+            List<BlockState> excludedBlocks, boolean shouldTeleport, boolean checkExclusions,
+            PasteMode pasteMode, List<BlockState> preservedBlocks, boolean includeAir) {
         if (!selection.isComplete()) {
             TeleportAPI.LOGGER.warn("Selection not complete!");
             return new TeleportResult(false, 0, 0, new HashSet<>(),
@@ -265,6 +285,13 @@ public class StructureTeleporter {
         int replacedCount = 0;
         int skippedCount = 0;
         Set<BlockState> excludedTypes = new HashSet<>();
+        Map<BlockState, Integer> replacedBlocksMap = new HashMap<>();
+        Map<BlockState, Integer> skippedBlocksMap = new HashMap<>();
+
+        // Helper to format block counts
+        // (Defined inline or as private method? Private method is cleaner but I can't
+        // easily add one at bottom without context.
+        // Let's just append logic at the end.)
 
         // First pass: count blocks and excluded blocks
         for (int x = min.getX(); x <= max.getX(); x++) {
@@ -307,7 +334,7 @@ public class StructureTeleporter {
                     BlockPos srcPos = new BlockPos(x, y, z);
                     BlockState srcState = sourceWorld.getBlockState(srcPos);
 
-                    if (srcState.isAir()) {
+                    if (srcState.isAir() && !includeAir) {
                         continue;
                     }
 
@@ -321,8 +348,10 @@ public class StructureTeleporter {
 
                         if (shouldReplace(dstState, srcState, pasteMode, preservedBlocks)) {
                             replacedCount++;
+                            replacedBlocksMap.merge(dstState, 1, (a, b) -> a + b);
                         } else {
                             skippedCount++;
+                            skippedBlocksMap.merge(srcState, 1, (a, b) -> a + b);
                         }
                     }
                 }
@@ -334,11 +363,11 @@ public class StructureTeleporter {
             message.append("Teleportation was not performed (shouldTeleport=false).");
             TeleportAPI.LOGGER.info(message.toString());
             return new TeleportResult(true, totalBlocks, excludedCount, excludedTypes,
-                    message.toString(), false, replacedCount, skippedCount);
+                    message.toString(), false, replacedCount, skippedCount, replacedBlocksMap, skippedBlocksMap);
         }
 
         // 1. Copy structure (this will skip excluded blocks)
-        List<BlockData> blocks = copyStructure(selection, excludedBlocks, checkExclusions);
+        List<BlockData> blocks = copyStructure(selection, excludedBlocks, checkExclusions, includeAir);
 
         if (blocks == null || blocks.isEmpty()) {
             return new TeleportResult(false, totalBlocks, excludedCount, excludedTypes,
@@ -367,10 +396,22 @@ public class StructureTeleporter {
         message.append("Structure teleported successfully. ")
                 .append(totalBlocks - excludedCount).append(" block(s) moved to ").append(targetPos).append(".");
 
+        if (!replacedBlocksMap.isEmpty()) {
+            message.append("\nReplaced Blocks:");
+            replacedBlocksMap.forEach((state, count) -> message.append("\n  - ")
+                    .append(state.getBlock().getName().getString()).append(": ").append(count));
+        }
+
+        if (!skippedBlocksMap.isEmpty()) {
+            message.append("\nSkipped (Lost) Blocks:");
+            skippedBlocksMap.forEach((state, count) -> message.append("\n  - ")
+                    .append(state.getBlock().getName().getString()).append(": ").append(count));
+        }
+
         TeleportAPI.LOGGER.info(message.toString());
 
         return new TeleportResult(true, totalBlocks, excludedCount, excludedTypes,
-                message.toString(), true, replacedCount, skippedCount);
+                message.toString(), true, replacedCount, skippedCount, replacedBlocksMap, skippedBlocksMap);
     }
 
     /**
@@ -409,15 +450,30 @@ public class StructureTeleporter {
 
     public static TeleportResult teleportByCorners(Level world, BlockPos p1, BlockPos p2, BlockPos targetPos,
             List<BlockState> excludedBlocks, boolean shouldTeleport, boolean checkExclusions) {
-        return teleportByCorners(world, p1, p2, world, targetPos, excludedBlocks, shouldTeleport, checkExclusions);
+        return teleportByCorners(world, p1, p2, world, targetPos, excludedBlocks, shouldTeleport, checkExclusions,
+                true);
+    }
+
+    public static TeleportResult teleportByCorners(Level world, BlockPos p1, BlockPos p2, BlockPos targetPos,
+            List<BlockState> excludedBlocks, boolean shouldTeleport, boolean checkExclusions, boolean includeAir) {
+        return teleportByCorners(world, p1, p2, world, targetPos, excludedBlocks, shouldTeleport, checkExclusions,
+                includeAir);
     }
 
     public static TeleportResult teleportByCorners(Level sourceLevel, BlockPos p1, BlockPos p2, Level targetLevel,
             BlockPos targetPos, List<BlockState> excludedBlocks, boolean shouldTeleport, boolean checkExclusions) {
+        return teleportByCorners(sourceLevel, p1, p2, targetLevel, targetPos, excludedBlocks, shouldTeleport,
+                checkExclusions, true);
+    }
+
+    public static TeleportResult teleportByCorners(Level sourceLevel, BlockPos p1, BlockPos p2, Level targetLevel,
+            BlockPos targetPos, List<BlockState> excludedBlocks, boolean shouldTeleport, boolean checkExclusions,
+            boolean includeAir) {
         Selection selection = new Selection();
         selection.setWorld(sourceLevel);
         selection.setFromCorners(p1, p2);
-        return teleportStructure(selection, targetLevel, targetPos, excludedBlocks, shouldTeleport, checkExclusions);
+        return teleportStructure(selection, targetLevel, targetPos, excludedBlocks, shouldTeleport, checkExclusions,
+                PasteMode.FORCE_REPLACE, null, includeAir);
     }
 
     /**
@@ -439,14 +495,29 @@ public class StructureTeleporter {
 
     public static TeleportResult teleportBySixPoints(Level world, BlockPos[] points, BlockPos targetPos,
             List<BlockState> excludedBlocks, boolean shouldTeleport, boolean checkExclusions) {
-        return teleportBySixPoints(world, points, world, targetPos, excludedBlocks, shouldTeleport, checkExclusions);
+        return teleportBySixPoints(world, points, world, targetPos, excludedBlocks, shouldTeleport, checkExclusions,
+                true);
+    }
+
+    public static TeleportResult teleportBySixPoints(Level world, BlockPos[] points, BlockPos targetPos,
+            List<BlockState> excludedBlocks, boolean shouldTeleport, boolean checkExclusions, boolean includeAir) {
+        return teleportBySixPoints(world, points, world, targetPos, excludedBlocks, shouldTeleport, checkExclusions,
+                includeAir);
     }
 
     public static TeleportResult teleportBySixPoints(Level sourceLevel, BlockPos[] points, Level targetLevel,
             BlockPos targetPos, List<BlockState> excludedBlocks, boolean shouldTeleport, boolean checkExclusions) {
+        return teleportBySixPoints(sourceLevel, points, targetLevel, targetPos, excludedBlocks, shouldTeleport,
+                checkExclusions, true);
+    }
+
+    public static TeleportResult teleportBySixPoints(Level sourceLevel, BlockPos[] points, Level targetLevel,
+            BlockPos targetPos, List<BlockState> excludedBlocks, boolean shouldTeleport, boolean checkExclusions,
+            boolean includeAir) {
         Selection selection = new Selection();
         selection.setWorld(sourceLevel);
         selection.setFromSixPoints(points);
-        return teleportStructure(selection, targetLevel, targetPos, excludedBlocks, shouldTeleport, checkExclusions);
+        return teleportStructure(selection, targetLevel, targetPos, excludedBlocks, shouldTeleport, checkExclusions,
+                PasteMode.FORCE_REPLACE, null, includeAir);
     }
 }
