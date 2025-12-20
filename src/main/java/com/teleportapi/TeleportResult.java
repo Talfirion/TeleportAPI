@@ -10,9 +10,12 @@ import java.util.Set;
 
 /**
  * Class for storing teleportation results.
- * Contains information about success, total blocks, excluded blocks, and their
- * types.
+ * Contains information about success, total blocks, excluded blocks, their
+ * types, and teleported entities.
  */
+import java.util.ArrayList;
+import java.util.List;
+
 public class TeleportResult {
     private final boolean success;
     private final int totalBlocks;
@@ -24,24 +27,35 @@ public class TeleportResult {
     private final int skippedBlockCount;
     private final Map<BlockState, Integer> replacedBlocksMap;
     private final Map<BlockState, Integer> skippedBlocksMap;
+    private final int teleportedEntitiesCount;
+    private final List<String> teleportedPlayerNames;
 
     public TeleportResult(boolean success, int totalBlocks, int excludedBlocks,
             Set<BlockState> excludedBlockTypes, String message, boolean teleported) {
         this(success, totalBlocks, excludedBlocks, excludedBlockTypes, message, teleported, 0, 0,
-                new HashMap<>(), new HashMap<>());
+                new HashMap<>(), new HashMap<>(), 0, new ArrayList<>());
     }
 
     public TeleportResult(boolean success, int totalBlocks, int excludedBlocks,
             Set<BlockState> excludedBlockTypes, String message, boolean teleported,
             int replacedBlockCount, int skippedBlockCount) {
         this(success, totalBlocks, excludedBlocks, excludedBlockTypes, message, teleported,
-                replacedBlockCount, skippedBlockCount, new HashMap<>(), new HashMap<>());
+                replacedBlockCount, skippedBlockCount, new HashMap<>(), new HashMap<>(), 0, new ArrayList<>());
     }
 
     public TeleportResult(boolean success, int totalBlocks, int excludedBlocks,
             Set<BlockState> excludedBlockTypes, String message, boolean teleported,
             int replacedBlockCount, int skippedBlockCount,
             Map<BlockState, Integer> replacedBlocksMap, Map<BlockState, Integer> skippedBlocksMap) {
+        this(success, totalBlocks, excludedBlocks, excludedBlockTypes, message, teleported,
+                replacedBlockCount, skippedBlockCount, replacedBlocksMap, skippedBlocksMap, 0, new ArrayList<>());
+    }
+
+    public TeleportResult(boolean success, int totalBlocks, int excludedBlocks,
+            Set<BlockState> excludedBlockTypes, String message, boolean teleported,
+            int replacedBlockCount, int skippedBlockCount,
+            Map<BlockState, Integer> replacedBlocksMap, Map<BlockState, Integer> skippedBlocksMap,
+            int teleportedEntitiesCount, List<String> teleportedPlayerNames) {
         this.success = success;
         this.totalBlocks = totalBlocks;
         this.excludedBlocks = excludedBlocks;
@@ -52,6 +66,9 @@ public class TeleportResult {
         this.skippedBlockCount = skippedBlockCount;
         this.replacedBlocksMap = replacedBlocksMap != null ? new HashMap<>(replacedBlocksMap) : new HashMap<>();
         this.skippedBlocksMap = skippedBlocksMap != null ? new HashMap<>(skippedBlocksMap) : new HashMap<>();
+        this.teleportedEntitiesCount = teleportedEntitiesCount;
+        this.teleportedPlayerNames = teleportedPlayerNames != null ? new ArrayList<>(teleportedPlayerNames)
+                : new ArrayList<>();
     }
 
     public boolean isSuccess() {
@@ -98,6 +115,14 @@ public class TeleportResult {
         return Collections.unmodifiableMap(skippedBlocksMap);
     }
 
+    public int getTeleportedEntitiesCount() {
+        return teleportedEntitiesCount;
+    }
+
+    public List<String> getTeleportedPlayerNames() {
+        return Collections.unmodifiableList(teleportedPlayerNames);
+    }
+
     @Override
     public String toString() {
         StringBuilder sb = new StringBuilder();
@@ -109,6 +134,10 @@ public class TeleportResult {
         sb.append(", teleportedBlocks=").append(getTeleportedBlocks());
         sb.append(", replacedBlocks=").append(replacedBlockCount);
         sb.append(", skippedBlocks=").append(skippedBlockCount);
+        sb.append(", entitiesTeleported=").append(teleportedEntitiesCount);
+        if (!teleportedPlayerNames.isEmpty()) {
+            sb.append(", players=").append(teleportedPlayerNames);
+        }
         if (excludedBlocks > 0) {
             sb.append(", excludedBlockTypes=").append(excludedBlockTypes.size()).append(" types");
         }
