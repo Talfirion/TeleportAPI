@@ -7,12 +7,19 @@ import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 
+import net.minecraft.world.phys.AABB;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.server.level.ServerLevel;
+
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 public class StructureTeleporter {
 
@@ -245,27 +252,35 @@ public class StructureTeleporter {
     public static TeleportResult teleportStructure(Selection selection, BlockPos targetPos,
             List<BlockState> excludedBlocks, boolean shouldTeleport, boolean checkExclusions) {
         return teleportStructure(selection, selection.getWorld(), targetPos, excludedBlocks, shouldTeleport,
-                checkExclusions, PasteMode.FORCE_REPLACE, null, true);
+                checkExclusions, PasteMode.FORCE_REPLACE, null, true, true, true);
     }
 
     public static TeleportResult teleportStructure(Selection selection, Level targetLevel,
             BlockPos targetPos, List<BlockState> excludedBlocks, boolean shouldTeleport,
             boolean checkExclusions) {
         return teleportStructure(selection, targetLevel, targetPos, excludedBlocks, shouldTeleport, checkExclusions,
-                PasteMode.FORCE_REPLACE, null, true);
+                PasteMode.FORCE_REPLACE, null, true, true, true);
     }
 
     public static TeleportResult teleportStructure(Selection selection, Level targetLevel, BlockPos targetPos,
             List<BlockState> excludedBlocks, boolean shouldTeleport, boolean checkExclusions,
             PasteMode pasteMode, List<BlockState> preservedBlocks) {
         return teleportStructure(selection, targetLevel, targetPos, excludedBlocks, shouldTeleport, checkExclusions,
-                pasteMode, preservedBlocks, true);
+                pasteMode, preservedBlocks, true, true, true);
+    }
+
+    public static TeleportResult teleportStructure(Selection selection, Level targetLevel, BlockPos targetPos,
+            List<BlockState> excludedBlocks, boolean shouldTeleport, boolean checkExclusions,
+            PasteMode pasteMode, List<BlockState> preservedBlocks, boolean includeAir) {
+        return teleportStructure(selection, targetLevel, targetPos, excludedBlocks, shouldTeleport, checkExclusions,
+                pasteMode, preservedBlocks, includeAir, true, true);
     }
 
     @SuppressWarnings("null")
     public static TeleportResult teleportStructure(Selection selection, Level targetLevel, BlockPos targetPos,
             List<BlockState> excludedBlocks, boolean shouldTeleport, boolean checkExclusions,
-            PasteMode pasteMode, List<BlockState> preservedBlocks, boolean includeAir) {
+            PasteMode pasteMode, List<BlockState> preservedBlocks, boolean includeAir,
+            boolean teleportPlayers, boolean teleportEntities) {
         if (!selection.isComplete()) {
             TeleportAPI.LOGGER.warn("Selection not complete!");
             return new TeleportResult(false, 0, 0, new HashSet<>(),
@@ -358,12 +373,45 @@ public class StructureTeleporter {
             }
         }
 
+        // Detect entities in the selection area
+        AABB selectionBox = new AABB(min.getX(), min.getY(), min.getZ(), max.getX() + 1, max.getY() + 1,
+                max.getZ() + 1);
+        List<Entity> entities = sourceWorld.getEntitiesOfClass(Entity.class, selectionBox);
+        List<EntityData> entitiesToTeleport = new ArrayList<>();
+
+        for (Entity entity : entities) {
+            // Skip players if teleportPlayers is false, skip other entities if
+            // teleportEntities is false
+            boolean isPlayer = entity instanceof Player;
+            if (isPlayer && !teleportPlayers)
+                continue;
+            if (!isPlayer && !teleportEntities)
+                continue;
+
+            // Store player name specifically for reporting
+            String playerName = null;
+            if (entity instanceof Player player) {
+                playerName = player.getName().getString();
+            }
+
+            // Calculate relative offset from selection min
+            double relX = entity.getX() - min.getX();
+            double relY = entity.getY() - min.getY();
+            double relZ = entity.getZ() - min.getZ();
+
+            entitiesToTeleport.add(new EntityData(entity, relX, relY, relZ, playerName));
+        }
+
         // If shouldTeleport is false, just return the scan results
         if (!shouldTeleport) {
             message.append("Teleportation was not performed (shouldTeleport=false).");
             TeleportAPI.LOGGER.info(message.toString());
             return new TeleportResult(true, totalBlocks, excludedCount, excludedTypes,
-                    message.toString(), false, replacedCount, skippedCount, replacedBlocksMap, skippedBlocksMap);
+                    message.toString(), false, replacedCount, skippedCount, replacedBlocksMap, skippedBlocksMap,
+                    entitiesToTeleport.size(), entitiesToTeleport.stream()
+                            .filter(e -> e.playerName != null)
+                            .map(e -> e.playerName)
+                            .collect(Collectors.toList()));
         }
 
         // 1. Copy structure (this will skip excluded blocks)
@@ -390,11 +438,47 @@ public class StructureTeleporter {
         }
 
         // 3. Paste in new location
-        // 3. Paste in new location
         pasteStructure(blocks, targetPos, targetLevel, pasteMode, preservedBlocks);
+
+        // 4. Teleport entities
+        List<String> teleportedPlayers = new ArrayList<>();
+        for (EntityData info : entitiesToTeleport) {
+            double targetX = targetPos.getX() + info.relX;
+            double targetY = targetPos.getY() + info.relY;
+            double targetZ = targetPos.getZ() + info.relZ;
+
+            if (targetLevel != sourceWorld && info.entity instanceof ServerPlayer serverPlayer) {
+                // Cross-dimensional player teleportation
+                if (targetLevel instanceof ServerLevel serverLevel) {
+                    serverPlayer.teleportTo(serverLevel, targetX, targetY, targetZ, serverPlayer.getYRot(),
+                            serverPlayer.getXRot());
+                }
+            } else {
+                // Regular teleportation or dimension change for non-players
+                info.entity.teleportTo(targetX, targetY, targetZ);
+                if (targetLevel != sourceWorld) {
+                    info.entity.changeDimension((ServerLevel) targetLevel);
+                }
+            }
+
+            if (info.playerName != null) {
+                teleportedPlayers.add(info.playerName);
+            }
+        }
 
         message.append("Structure teleported successfully. ")
                 .append(totalBlocks - excludedCount).append(" block(s) moved to ").append(targetPos).append(".");
+
+        if (entitiesToTeleport.size() > 0) {
+            message.append("\nEntities Teleported: ").append(entitiesToTeleport.size());
+            for (String pName : teleportedPlayers) {
+                message.append("\n  - teleported player \"").append(pName).append("\"");
+            }
+            int nonPlayers = entitiesToTeleport.size() - teleportedPlayers.size();
+            if (nonPlayers > 0) {
+                message.append("\n  - teleported ").append(nonPlayers).append(" other entities");
+            }
+        }
 
         if (!replacedBlocksMap.isEmpty()) {
             message.append("\nReplaced Blocks:");
@@ -411,7 +495,24 @@ public class StructureTeleporter {
         TeleportAPI.LOGGER.info(message.toString());
 
         return new TeleportResult(true, totalBlocks, excludedCount, excludedTypes,
-                message.toString(), true, replacedCount, skippedCount, replacedBlocksMap, skippedBlocksMap);
+                message.toString(), true, replacedCount, skippedCount, replacedBlocksMap, skippedBlocksMap,
+                entitiesToTeleport.size(), teleportedPlayers);
+    }
+
+    private static class EntityData {
+        final Entity entity;
+        final double relX;
+        final double relY;
+        final double relZ;
+        final String playerName;
+
+        EntityData(Entity entity, double relX, double relY, double relZ, String playerName) {
+            this.entity = entity;
+            this.relX = relX;
+            this.relY = relY;
+            this.relZ = relZ;
+            this.playerName = playerName;
+        }
     }
 
     /**
@@ -426,9 +527,9 @@ public class StructureTeleporter {
         if (checkExclusions) {
             // get list blocks for exclusions
             List<BlockState> excludedBlocks = getDefaultExcludedBlocks();
-            teleportByCorners(world, p1, p2, world, targetPos, excludedBlocks, true, true);
+            teleportByCorners(world, p1, p2, world, targetPos, excludedBlocks, true, true, true, true, true);
         } else {
-            teleportByCorners(world, p1, p2, world, targetPos, null, true, false);
+            teleportByCorners(world, p1, p2, world, targetPos, null, true, false, true, true, true);
         }
     }
 
@@ -442,82 +543,84 @@ public class StructureTeleporter {
         if (checkExclusions) {
             // get list blocks for exclusions
             List<BlockState> excludedBlocks = getDefaultExcludedBlocks();
-            teleportByCorners(sourceLevel, p1, p2, targetLevel, targetPos, excludedBlocks, true, true);
+            teleportByCorners(sourceLevel, p1, p2, targetLevel, targetPos, excludedBlocks, true, true, true, true,
+                    true);
         } else {
-            teleportByCorners(sourceLevel, p1, p2, targetLevel, targetPos, null, true, false);
+            teleportByCorners(sourceLevel, p1, p2, targetLevel, targetPos, null, true, false, true, true, true);
         }
     }
 
     public static TeleportResult teleportByCorners(Level world, BlockPos p1, BlockPos p2, BlockPos targetPos,
             List<BlockState> excludedBlocks, boolean shouldTeleport, boolean checkExclusions) {
         return teleportByCorners(world, p1, p2, world, targetPos, excludedBlocks, shouldTeleport, checkExclusions,
-                true);
+                true, true, true);
     }
 
     public static TeleportResult teleportByCorners(Level world, BlockPos p1, BlockPos p2, BlockPos targetPos,
             List<BlockState> excludedBlocks, boolean shouldTeleport, boolean checkExclusions, boolean includeAir) {
         return teleportByCorners(world, p1, p2, world, targetPos, excludedBlocks, shouldTeleport, checkExclusions,
-                includeAir);
+                includeAir, true, true);
     }
 
     public static TeleportResult teleportByCorners(Level sourceLevel, BlockPos p1, BlockPos p2, Level targetLevel,
             BlockPos targetPos, List<BlockState> excludedBlocks, boolean shouldTeleport, boolean checkExclusions) {
         return teleportByCorners(sourceLevel, p1, p2, targetLevel, targetPos, excludedBlocks, shouldTeleport,
-                checkExclusions, true);
+                checkExclusions, true, true, true);
     }
 
     public static TeleportResult teleportByCorners(Level sourceLevel, BlockPos p1, BlockPos p2, Level targetLevel,
             BlockPos targetPos, List<BlockState> excludedBlocks, boolean shouldTeleport, boolean checkExclusions,
-            boolean includeAir) {
+            boolean includeAir, boolean teleportPlayers, boolean teleportEntities) {
         Selection selection = new Selection();
         selection.setWorld(sourceLevel);
         selection.setFromCorners(p1, p2);
         return teleportStructure(selection, targetLevel, targetPos, excludedBlocks, shouldTeleport, checkExclusions,
-                PasteMode.FORCE_REPLACE, null, includeAir);
+                PasteMode.FORCE_REPLACE, null, includeAir, teleportPlayers, teleportEntities);
     }
 
     /**
      * Teleport structure defined by 6 points.
      */
     public static void teleportBySixPoints(Level world, BlockPos[] points, BlockPos targetPos) {
-        teleportBySixPoints(world, points, world, targetPos, null, true, true);
+        teleportBySixPoints(world, points, world, targetPos, null, true, true, true, true, true);
     }
 
     public static void teleportBySixPoints(Level sourceLevel, BlockPos[] points, Level targetLevel,
             BlockPos targetPos) {
-        teleportBySixPoints(sourceLevel, points, targetLevel, targetPos, null, true, true);
+        teleportBySixPoints(sourceLevel, points, targetLevel, targetPos, null, true, true, true, true, true);
     }
 
     public static TeleportResult teleportBySixPoints(Level world, BlockPos[] points, BlockPos targetPos,
             List<BlockState> excludedBlocks, boolean shouldTeleport) {
-        return teleportBySixPoints(world, points, world, targetPos, excludedBlocks, shouldTeleport, true);
+        return teleportBySixPoints(world, points, world, targetPos, excludedBlocks, shouldTeleport, true, true, true,
+                true);
     }
 
     public static TeleportResult teleportBySixPoints(Level world, BlockPos[] points, BlockPos targetPos,
             List<BlockState> excludedBlocks, boolean shouldTeleport, boolean checkExclusions) {
         return teleportBySixPoints(world, points, world, targetPos, excludedBlocks, shouldTeleport, checkExclusions,
-                true);
+                true, true, true);
     }
 
     public static TeleportResult teleportBySixPoints(Level world, BlockPos[] points, BlockPos targetPos,
             List<BlockState> excludedBlocks, boolean shouldTeleport, boolean checkExclusions, boolean includeAir) {
         return teleportBySixPoints(world, points, world, targetPos, excludedBlocks, shouldTeleport, checkExclusions,
-                includeAir);
+                includeAir, true, true);
     }
 
     public static TeleportResult teleportBySixPoints(Level sourceLevel, BlockPos[] points, Level targetLevel,
             BlockPos targetPos, List<BlockState> excludedBlocks, boolean shouldTeleport, boolean checkExclusions) {
         return teleportBySixPoints(sourceLevel, points, targetLevel, targetPos, excludedBlocks, shouldTeleport,
-                checkExclusions, true);
+                checkExclusions, true, true, true);
     }
 
     public static TeleportResult teleportBySixPoints(Level sourceLevel, BlockPos[] points, Level targetLevel,
             BlockPos targetPos, List<BlockState> excludedBlocks, boolean shouldTeleport, boolean checkExclusions,
-            boolean includeAir) {
+            boolean includeAir, boolean teleportPlayers, boolean teleportEntities) {
         Selection selection = new Selection();
         selection.setWorld(sourceLevel);
         selection.setFromSixPoints(points);
         return teleportStructure(selection, targetLevel, targetPos, excludedBlocks, shouldTeleport, checkExclusions,
-                PasteMode.FORCE_REPLACE, null, includeAir);
+                PasteMode.FORCE_REPLACE, null, includeAir, teleportPlayers, teleportEntities);
     }
 }
