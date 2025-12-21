@@ -87,20 +87,20 @@ public class StructureTeleporter {
      * after teleportation.
      */
     private static BlockState sanitizeBlockState(BlockState state) {
-        if (state.hasProperty(BlockStateProperties.POWERED)) {
-            state = state.setValue(BlockStateProperties.POWERED, false);
+        BlockState sanitized = state;
+        if (sanitized.hasProperty(BlockStateProperties.POWERED)) {
+            sanitized = sanitized.setValue(BlockStateProperties.POWERED, false);
         }
-        if (state.hasProperty(BlockStateProperties.TRIGGERED)) {
-            state = state.setValue(BlockStateProperties.TRIGGERED, false);
+        if (sanitized.hasProperty(BlockStateProperties.TRIGGERED)) {
+            sanitized = sanitized.setValue(BlockStateProperties.TRIGGERED, false);
         }
-        if (state.hasProperty(BlockStateProperties.LIT)) {
-            // Usually we want LIT to stay (like lanterns), but for redstone torches/lamps
-            // we might want to reset them to default so they re-calculate.
-            // However, resetting LIT for everything might turn off all lanterns.
-            // Let's be selective if possible, or just skip LIT for now and see.
-            // state = state.setValue(BlockStateProperties.LIT, false);
+        if (sanitized.hasProperty(BlockStateProperties.POWER)) {
+            sanitized = sanitized.setValue(BlockStateProperties.POWER, 0);
         }
-        return state;
+        if (sanitized.hasProperty(BlockStateProperties.LIT)) {
+            sanitized = sanitized.setValue(BlockStateProperties.LIT, false);
+        }
+        return sanitized;
     }
 
     /**
@@ -265,9 +265,17 @@ public class StructureTeleporter {
             BlockPos absolutePos = targetPos.offset(blockData.relativePos);
             BlockState state = world.getBlockState(absolutePos);
 
-            // Notify neighbors and update block logic (flag 3 = UPDATE_CLIENTS |
-            // UPDATE_NEIGHBORS)
+            // Notify neighbors and update block logic
+            // Using flag 3 (UPDATE_NEIGHBORS | UPDATE_CLIENTS)
             world.sendBlockUpdated(absolutePos, state, state, 3);
+
+            // Force block to re-check its validity (important for plants, portals, etc.)
+            // We notify the block that its neighbors might have changed from all 6
+            // directions
+            for (net.minecraft.core.Direction dir : net.minecraft.core.Direction.values()) {
+                BlockPos neighborPos = absolutePos.relative(dir);
+                world.neighborChanged(absolutePos, world.getBlockState(neighborPos).getBlock(), neighborPos);
+            }
             world.updateNeighborsAt(absolutePos, state.getBlock());
         }
 
@@ -465,9 +473,11 @@ public class StructureTeleporter {
                     BlockPos pos = new BlockPos(x, y, z);
                     BlockState state = sourceWorld.getBlockState(pos);
 
-                    // Remove block with neighbor updates (flag true)
+                    // Remove block with neighbor updates (flag false for isMoving)
+                    // We use false to ensure that neighbor updates are triggered,
+                    // which prevents "hanging" blocks at the source.
                     if (!isExcluded(state, excludedBlocks, checkExclusions)) {
-                        sourceWorld.removeBlock(pos, true);
+                        sourceWorld.removeBlock(pos, false);
                     }
                 }
             }
