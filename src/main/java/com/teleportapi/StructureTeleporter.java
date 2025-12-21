@@ -6,6 +6,7 @@ import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.entity.Entity;
@@ -76,6 +77,30 @@ public class StructureTeleporter {
             }
         }
         return false;
+    }
+
+    /**
+     * Sanitizes a block state by resetting "volatile" properties like POWERED or
+     * TRIGGERED.
+     * This prevents redstone buttons or pressure plates from being stuck in the ON
+     * state
+     * after teleportation.
+     */
+    private static BlockState sanitizeBlockState(BlockState state) {
+        if (state.hasProperty(BlockStateProperties.POWERED)) {
+            state = state.setValue(BlockStateProperties.POWERED, false);
+        }
+        if (state.hasProperty(BlockStateProperties.TRIGGERED)) {
+            state = state.setValue(BlockStateProperties.TRIGGERED, false);
+        }
+        if (state.hasProperty(BlockStateProperties.LIT)) {
+            // Usually we want LIT to stay (like lanterns), but for redstone torches/lamps
+            // we might want to reset them to default so they re-calculate.
+            // However, resetting LIT for everything might turn off all lanterns.
+            // Let's be selective if possible, or just skip LIT for now and see.
+            // state = state.setValue(BlockStateProperties.LIT, false);
+        }
+        return state;
     }
 
     /**
@@ -176,8 +201,8 @@ public class StructureTeleporter {
                     // Calculate relative position (relative to minimum point)
                     BlockPos relativePos = pos.subtract(min);
 
-                    // Save block
-                    blocks.add(new BlockData(relativePos, state, nbt));
+                    // Save block (sanitized)
+                    blocks.add(new BlockData(relativePos, sanitizeBlockState(state), nbt));
                 }
             }
         }
@@ -206,33 +231,44 @@ public class StructureTeleporter {
             return;
         }
 
-        // Paste each block
+        // Pass 1: Set blocks with minimal updates (flag 2 = UPDATE_CLIENTS)
+        // This ensures all blocks are in place before neighbor updates are triggered.
         for (BlockData blockData : blocks) {
-            // Calculate absolute position (target position + relative)
             BlockPos absolutePos = targetPos.offset(blockData.relativePos);
             BlockState existingState = world.getBlockState(absolutePos);
 
             if (shouldReplace(existingState, blockData.blockState, mode, preservedBlocks)) {
-                // Set block
-                world.setBlock(absolutePos, blockData.blockState, 3);
-            } else {
-                continue; // Skip NBT restoration if block wasn't replaced
+                // Set block without neighbor updates (flag 2 | 16)
+                // 16 is UPDATE_KNOWN_SHAPE, used to avoid some side effects.
+                world.setBlock(absolutePos, blockData.blockState, 18);
             }
+        }
 
-            // Restore NBT data (if available)
+        // Pass 2: Restore NBT and Block Entity data
+        for (BlockData blockData : blocks) {
             if (blockData.nbt != null) {
-
+                BlockPos absolutePos = targetPos.offset(blockData.relativePos);
                 BlockEntity blockEntity = world.getBlockEntity(absolutePos);
                 if (blockEntity != null) {
-                    // Create NBT copy and update coordinates
                     CompoundTag tag = blockData.nbt.copy();
                     tag.putInt("x", absolutePos.getX());
                     tag.putInt("y", absolutePos.getY());
                     tag.putInt("z", absolutePos.getZ());
-
                     blockEntity.load(tag);
                 }
             }
+        }
+
+        // Pass 3: Trigger neighbor updates to ensure logic (like grass support or
+        // redstone) runs correctly
+        for (BlockData blockData : blocks) {
+            BlockPos absolutePos = targetPos.offset(blockData.relativePos);
+            BlockState state = world.getBlockState(absolutePos);
+
+            // Notify neighbors and update block logic (flag 3 = UPDATE_CLIENTS |
+            // UPDATE_NEIGHBORS)
+            world.sendBlockUpdated(absolutePos, state, state, 3);
+            world.updateNeighborsAt(absolutePos, state.getBlock());
         }
 
         TeleportAPI.LOGGER.info("Blocks pasted: " + blocks.size() + " at position " + targetPos);
@@ -429,9 +465,9 @@ public class StructureTeleporter {
                     BlockPos pos = new BlockPos(x, y, z);
                     BlockState state = sourceWorld.getBlockState(pos);
 
-                    // Don't remove excluded blocks
+                    // Remove block with neighbor updates (flag true)
                     if (!isExcluded(state, excludedBlocks, checkExclusions)) {
-                        sourceWorld.removeBlock(pos, false);
+                        sourceWorld.removeBlock(pos, true);
                     }
                 }
             }
