@@ -1,6 +1,7 @@
 package com.teleportapi;
 
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Blocks;
@@ -13,6 +14,8 @@ import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.TicketType;
+import net.minecraft.world.level.ChunkPos;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -86,21 +89,22 @@ public class StructureTeleporter {
      * state
      * after teleportation.
      */
+    @SuppressWarnings("null")
     private static BlockState sanitizeBlockState(BlockState state) {
-        BlockState sanitized = state;
-        if (sanitized.hasProperty(BlockStateProperties.POWERED)) {
-            sanitized = sanitized.setValue(BlockStateProperties.POWERED, false);
+        if (state.hasProperty(BlockStateProperties.POWERED)) {
+            state = state.setValue(BlockStateProperties.POWERED, false);
         }
-        if (sanitized.hasProperty(BlockStateProperties.TRIGGERED)) {
-            sanitized = sanitized.setValue(BlockStateProperties.TRIGGERED, false);
+        if (state.hasProperty(BlockStateProperties.TRIGGERED)) {
+            state = state.setValue(BlockStateProperties.TRIGGERED, false);
         }
-        if (sanitized.hasProperty(BlockStateProperties.POWER)) {
-            sanitized = sanitized.setValue(BlockStateProperties.POWER, 0);
+        if (state.hasProperty(BlockStateProperties.LIT)) {
+            // Usually we want LIT to stay (like lanterns), but for redstone torches/lamps
+            // we might want to reset them to default so they re-calculate.
+            // However, resetting LIT for everything might turn off all lanterns.
+            // Let's be selective if possible, or just skip LIT for now and see.
+            // state = state.setValue(BlockStateProperties.LIT, false);
         }
-        if (sanitized.hasProperty(BlockStateProperties.LIT)) {
-            sanitized = sanitized.setValue(BlockStateProperties.LIT, false);
-        }
-        return sanitized;
+        return state;
     }
 
     /**
@@ -196,6 +200,15 @@ public class StructureTeleporter {
                         nbt.remove("x");
                         nbt.remove("y");
                         nbt.remove("z");
+
+                        // Remove multiblock and internal connection references
+                        // These will be rebuilt by Minecraft or the mod when the structure is pasted
+                        nbt.remove("master");
+                        nbt.remove("slave");
+                        nbt.remove("part");
+                        nbt.remove("multiblock_data");
+                        nbt.remove("connections");
+                        nbt.remove("id");
                     }
 
                     // Calculate relative position (relative to minimum point)
@@ -231,52 +244,86 @@ public class StructureTeleporter {
             return;
         }
 
-        // Pass 1: Set blocks with minimal updates (flag 2 = UPDATE_CLIENTS)
-        // This ensures all blocks are in place before neighbor updates are triggered.
+        // Force load chunks at target location
+        if (world instanceof ServerLevel serverLevel) {
+            Set<ChunkPos> targetedChunks = new HashSet<>();
+            for (BlockData blockData : blocks) {
+                BlockPos absolutePos = targetPos.offset(blockData.relativePos);
+                targetedChunks.add(new ChunkPos(absolutePos));
+            }
+
+            for (ChunkPos chunkPos : targetedChunks) {
+                serverLevel.getChunkSource().addRegionTicket(TicketType.FORCED, chunkPos, 2, chunkPos);
+            }
+        }
+
+        // Create a map for NBT data for Pass 1
+        Map<BlockPos, CompoundTag> nbtMap = new HashMap<>();
+        for (BlockData blockData : blocks) {
+            if (blockData.nbt != null) {
+                nbtMap.put(targetPos.offset(blockData.relativePos), blockData.nbt);
+            }
+        }
+
+        // Pass 1.5: Clear destination to AIR first
+        // This prevents issues with floating blocks or redstone conflicts.
         for (BlockData blockData : blocks) {
             BlockPos absolutePos = targetPos.offset(blockData.relativePos);
             BlockState existingState = world.getBlockState(absolutePos);
 
             if (shouldReplace(existingState, blockData.blockState, mode, preservedBlocks)) {
-                // Set block without neighbor updates (flag 2 | 16)
-                // 16 is UPDATE_KNOWN_SHAPE, used to avoid some side effects.
-                world.setBlock(absolutePos, blockData.blockState, 18);
+                // Clear to AIR (flag 2 = UPDATE_CLIENTS)
+                world.setBlock(absolutePos, Blocks.AIR.defaultBlockState(), 2);
             }
         }
 
-        // Pass 2: Restore NBT and Block Entity data
+        // Pass 2: Set real blocks and IMMEDIATELY load NBT
+        // Using flag 18 (2 | 16) to update clients but avoid excessive neighbor
+        // updates for now.
         for (BlockData blockData : blocks) {
-            if (blockData.nbt != null) {
-                BlockPos absolutePos = targetPos.offset(blockData.relativePos);
-                BlockEntity blockEntity = world.getBlockEntity(absolutePos);
-                if (blockEntity != null) {
-                    CompoundTag tag = blockData.nbt.copy();
-                    tag.putInt("x", absolutePos.getX());
-                    tag.putInt("y", absolutePos.getY());
-                    tag.putInt("z", absolutePos.getZ());
-                    blockEntity.load(tag);
+            BlockPos absolutePos = targetPos.offset(blockData.relativePos);
+
+            if (shouldReplace(world.getBlockState(absolutePos), blockData.blockState, mode, preservedBlocks)) {
+                world.setBlock(absolutePos, blockData.blockState, 18);
+
+                // Immediately load NBT if it exists
+                if (nbtMap.containsKey(absolutePos)) {
+                    BlockEntity be = world.getBlockEntity(absolutePos);
+                    if (be != null) {
+                        CompoundTag tag = nbtMap.get(absolutePos).copy();
+                        tag.putInt("x", absolutePos.getX());
+                        tag.putInt("y", absolutePos.getY());
+                        tag.putInt("z", absolutePos.getZ());
+                        tag.remove("id"); // Prevent multiblock reference conflicts
+                        be.load(tag);
+                        be.setChanged();
+                    }
                 }
             }
         }
 
-        // Pass 3: Trigger neighbor updates to ensure logic (like grass support or
-        // redstone) runs correctly
+        // Pass 2: Trigger neighbor updates
         for (BlockData blockData : blocks) {
             BlockPos absolutePos = targetPos.offset(blockData.relativePos);
             BlockState state = world.getBlockState(absolutePos);
 
-            // Notify neighbors and update block logic
-            // Using flag 3 (UPDATE_NEIGHBORS | UPDATE_CLIENTS)
-            world.sendBlockUpdated(absolutePos, state, state, 3);
-
-            // Force block to re-check its validity (important for plants, portals, etc.)
-            // We notify the block that its neighbors might have changed from all 6
-            // directions
-            for (net.minecraft.core.Direction dir : net.minecraft.core.Direction.values()) {
-                BlockPos neighborPos = absolutePos.relative(dir);
-                world.neighborChanged(absolutePos, world.getBlockState(neighborPos).getBlock(), neighborPos);
-            }
+            // Update neighbors at the position
             world.updateNeighborsAt(absolutePos, state.getBlock());
+
+            // Also update neighbors' neighbors to ensure full propagation (especially for
+            // redstone)
+            for (Direction direction : Direction.values()) {
+                BlockPos neighborPos = absolutePos.relative(direction);
+                world.updateNeighborsAt(neighborPos, world.getBlockState(neighborPos).getBlock());
+            }
+        }
+
+        // Pass 3: Final client synchronization
+        // Pass AIR as old state to force client to redraw/re-evaluate
+        for (BlockData blockData : blocks) {
+            BlockPos absolutePos = targetPos.offset(blockData.relativePos);
+            BlockState state = world.getBlockState(absolutePos);
+            world.sendBlockUpdated(absolutePos, Blocks.AIR.defaultBlockState(), state, 3);
         }
 
         TeleportAPI.LOGGER.info("Blocks pasted: " + blocks.size() + " at position " + targetPos);
@@ -466,18 +513,26 @@ public class StructureTeleporter {
                     "No blocks to teleport after exclusions", false, 0, 0);
         }
 
-        // 2. Remove blocks from old location (but keep excluded blocks)
+        // 2. Remove blocks from old location (but keep excluded blocks) with proper
+        // synchronization
         for (int x = min.getX(); x <= max.getX(); x++) {
             for (int y = min.getY(); y <= max.getY(); y++) {
                 for (int z = min.getZ(); z <= max.getZ(); z++) {
                     BlockPos pos = new BlockPos(x, y, z);
                     BlockState state = sourceWorld.getBlockState(pos);
 
-                    // Remove block with neighbor updates (flag false for isMoving)
-                    // We use false to ensure that neighbor updates are triggered,
-                    // which prevents "hanging" blocks at the source.
                     if (!isExcluded(state, excludedBlocks, checkExclusions)) {
-                        sourceWorld.removeBlock(pos, false);
+                        // Update neighbors at the old location before removal to let them know the
+                        // block is changing
+                        for (Direction direction : Direction.values()) {
+                            BlockPos neighborPos = pos.relative(direction);
+                            sourceWorld.updateNeighborsAt(neighborPos,
+                                    sourceWorld.getBlockState(neighborPos).getBlock());
+                        }
+
+                        // Set to AIR and synchronize with clients
+                        sourceWorld.setBlock(pos, Blocks.AIR.defaultBlockState(), 3);
+                        sourceWorld.sendBlockUpdated(pos, state, Blocks.AIR.defaultBlockState(), 3);
                     }
                 }
             }
