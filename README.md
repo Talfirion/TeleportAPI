@@ -4,6 +4,111 @@
 
 TeleportAPI is a library for Minecraft Forge 1.20.1 that provides functionality for selecting, copying, and teleporting structures in the world.
 
+## Development Setup
+
+### Prerequisites
+
+This project requires **Java 17** to build. The project is configured to use Java 17 as specified in `build.gradle`.
+
+### Windows Setup
+
+1. **Install Java 17**
+   
+   Download and install OpenJDK 17 from one of these sources:
+   - [Microsoft Build of OpenJDK 17](https://learn.microsoft.com/en-us/java/openjdk/download#openjdk-17)
+   - [Adoptium Eclipse Temurin 17](https://adoptium.net/temurin/releases/?version=17)
+   - [Oracle JDK 17](https://www.oracle.com/java/technologies/javase/jdk17-archive-downloads.html)
+
+2. **Set JAVA_HOME Environment Variable**
+   
+   After installation, set the `JAVA_HOME` environment variable:
+   
+   - Open **System Properties** → **Environment Variables**
+   - Under **System variables**, click **New**
+   - Variable name: `JAVA_HOME`
+   - Variable value: Path to your JDK 17 installation (e.g., `C:\Program Files\Microsoft\jdk-17.0.x`)
+   - Click **OK** to save
+   
+   Alternatively, using PowerShell (as Administrator):
+   ```powershell
+   [System.Environment]::SetEnvironmentVariable('JAVA_HOME', 'C:\Program Files\Microsoft\jdk-17.0.x', [System.EnvironmentVariableTarget]::Machine)
+   ```
+
+3. **Add Java to PATH**
+   
+   Add `%JAVA_HOME%\bin` to your PATH environment variable:
+   
+   - In **Environment Variables**, find **Path** under **System variables**
+   - Click **Edit** → **New**
+   - Add: `%JAVA_HOME%\bin`
+   - Click **OK** to save all dialogs
+
+4. **Verify Installation**
+   
+   Open a new Command Prompt or PowerShell window and verify:
+   ```cmd
+   java -version
+   ```
+   
+   You should see output indicating Java 17 (e.g., `openjdk version "17.0.x"`)
+
+5. **Configure Gradle (Optional)**
+   
+   If Gradle doesn't detect Java 17 automatically, you can specify it in `gradle-local.properties`:
+   
+   Create `gradle-local.properties` in the project root (this file is gitignored):
+   ```properties
+   org.gradle.java.home=C:\\Program Files\\Microsoft\\jdk-17.0.x
+   ```
+   
+   Replace the path with your actual JDK 17 installation path.
+
+6. **Build the Project**
+   
+   Run the Gradle wrapper:
+   ```cmd
+   gradlew.bat build
+   ```
+
+### macOS/Linux Setup
+
+1. **Install Java 17**
+   
+   Using Homebrew (macOS):
+   ```bash
+   brew install openjdk@17
+   ```
+   
+   Using apt (Ubuntu/Debian):
+   ```bash
+   sudo apt update
+   sudo apt install openjdk-17-jdk
+   ```
+
+2. **Set JAVA_HOME**
+   
+   macOS:
+   ```bash
+   export JAVA_HOME=$(/usr/libexec/java_home -v 17)
+   ```
+   
+   Linux:
+   ```bash
+   export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
+   ```
+   
+   Add to your `~/.zshrc` or `~/.bashrc` to make it permanent.
+
+3. **Verify Installation**
+   ```bash
+   java -version
+   ```
+
+4. **Build the Project**
+   ```bash
+   ./gradlew build
+   ```
+
 ## Installation
 
 Add to your `build.gradle`:

@@ -1,0 +1,12 @@
+# Local Gradle Properties Example
+# Copy this file to gradle-local.properties and uncomment/set your Java home path
+# This file is gitignored, so your local settings won't be committed
+
+# For Windows:
+# org.gradle.java.home=C:\\Users\\YourUsername\\AppData\\Local\\Programs\\Microsoft\\jdk-21.0.8.9-hotspot
+
+# For macOS/Linux:
+# org.gradle.java.home=/Library/Java/JavaVirtualMachines/jdk-21.jdk/Contents/Home
+# or
+# org.gradle.java.home=/usr/lib/jvm/java-21-openjdk
+
