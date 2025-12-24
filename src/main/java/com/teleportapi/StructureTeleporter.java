@@ -240,9 +240,11 @@ public class StructureTeleporter {
     public static void pasteStructure(List<BlockData> blocks, BlockPos targetPos, Level world,
             PasteMode mode, List<BlockState> preservedBlocks) {
         if (blocks == null || blocks.isEmpty()) {
-            TeleportAPI.LOGGER.warn("No blocks to paste!");
+            TeleportAPI.LOGGER.warn("[TeleportAPI] Paste: No blocks to paste!");
             return;
         }
+
+        TeleportAPI.LOGGER.info("[TeleportAPI] Paste: Starting pasting " + blocks.size() + " blocks to " + targetPos);
 
         // Force load chunks at target location
         if (world instanceof ServerLevel serverLevel) {
@@ -264,8 +266,10 @@ public class StructureTeleporter {
                 nbtMap.put(targetPos.offset(blockData.relativePos), blockData.nbt);
             }
         }
+        TeleportAPI.LOGGER.info("[TeleportAPI] Paste: NBT map prepared with " + nbtMap.size() + " entries");
 
         // Pass 1.5: Clear destination to AIR first
+        TeleportAPI.LOGGER.info("[TeleportAPI] Paste Pass 1: Clearing destination area");
         // This prevents issues with floating blocks or redstone conflicts.
         for (BlockData blockData : blocks) {
             BlockPos absolutePos = targetPos.offset(blockData.relativePos);
@@ -281,6 +285,7 @@ public class StructureTeleporter {
         // Pass 2: Set real blocks and IMMEDIATELY load NBT
         // Using flag 16 (NO_NEIGHBOR_UPDATE) to ensure all blocks are in place
         // before any physics or survival checks are triggered.
+        TeleportAPI.LOGGER.info("[TeleportAPI] Paste Pass 2: Setting blocks and loading NBT");
         for (BlockData blockData : blocks) {
             BlockPos absolutePos = targetPos.offset(blockData.relativePos);
 
@@ -305,6 +310,7 @@ public class StructureTeleporter {
 
         // Pass 3: Trigger neighbor updates
         // Now that all blocks are in place, we can safely update neighbors
+        TeleportAPI.LOGGER.info("[TeleportAPI] Paste Pass 3: Triggering neighbor updates");
         for (BlockData blockData : blocks) {
             BlockPos absolutePos = targetPos.offset(blockData.relativePos);
             BlockState state = world.getBlockState(absolutePos);
@@ -315,6 +321,7 @@ public class StructureTeleporter {
 
         // Pass 4: Final client synchronization
         // Ensure clients see the correctly updated blocks and their states
+        TeleportAPI.LOGGER.info("[TeleportAPI] Paste Pass 4: Synchronizing with clients");
         for (BlockData blockData : blocks) {
             BlockPos absolutePos = targetPos.offset(blockData.relativePos);
             BlockState state = world.getBlockState(absolutePos);
@@ -322,7 +329,7 @@ public class StructureTeleporter {
             world.sendBlockUpdated(absolutePos, Blocks.AIR.defaultBlockState(), state, 2);
         }
 
-        TeleportAPI.LOGGER.info("Blocks pasted: " + blocks.size() + " at position " + targetPos);
+        TeleportAPI.LOGGER.info("[TeleportAPI] Paste: Finished pasting " + blocks.size() + " blocks at " + targetPos);
     }
 
     // Method for teleporting structure (remove from old location and paste in
@@ -511,6 +518,8 @@ public class StructureTeleporter {
 
         // 2. Remove blocks from old location (but keep excluded blocks) with proper
         // synchronization
+        TeleportAPI.LOGGER.info("[TeleportAPI] Source: Removing blocks from old location");
+        int removedCount = 0;
         for (int x = min.getX(); x <= max.getX(); x++) {
             for (int y = min.getY(); y <= max.getY(); y++) {
                 for (int z = min.getZ(); z <= max.getZ(); z++) {
@@ -518,21 +527,19 @@ public class StructureTeleporter {
                     BlockState state = sourceWorld.getBlockState(pos);
 
                     if (!isExcluded(state, excludedBlocks, checkExclusions)) {
-                        // Update neighbors at the old location before removal to let them know the
-                        // block is changing
-                        for (Direction direction : Direction.values()) {
-                            BlockPos neighborPos = pos.relative(direction);
-                            sourceWorld.updateNeighborsAt(neighborPos,
-                                    sourceWorld.getBlockState(neighborPos).getBlock());
-                        }
-
-                        // Set to AIR and synchronize with clients
-                        sourceWorld.destroyBlock(pos, false);
+                        /*
+                         * We use flag 16 (NO_NEIGHBOR_UPDATE) and 64 (IS_MOVING) to prevent
+                         * dependent blocks (redstone, torches, etc.) from dropping as items
+                         * during the removal process.
+                         */
+                        sourceWorld.setBlock(pos, Blocks.AIR.defaultBlockState(), 16 | 64);
                         sourceWorld.sendBlockUpdated(pos, state, Blocks.AIR.defaultBlockState(), 3);
+                        removedCount++;
                     }
                 }
             }
         }
+        TeleportAPI.LOGGER.info("[TeleportAPI] Source: Removed " + removedCount + " blocks");
 
         // 3. Paste in new location
         pasteStructure(blocks, targetPos, targetLevel, pasteMode, preservedBlocks);
