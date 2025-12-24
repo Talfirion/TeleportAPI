@@ -272,19 +272,20 @@ public class StructureTeleporter {
             BlockState existingState = world.getBlockState(absolutePos);
 
             if (shouldReplace(existingState, blockData.blockState, mode, preservedBlocks)) {
-                // Clear to AIR (flag 2 = UPDATE_CLIENTS)
-                world.setBlock(absolutePos, Blocks.AIR.defaultBlockState(), 2);
+                // Clear to AIR (flag 16 = NO_NEIGHBOR_UPDATE)
+                // We use 16 to prevent cascading drops while clearing
+                world.setBlock(absolutePos, Blocks.AIR.defaultBlockState(), 16);
             }
         }
 
         // Pass 2: Set real blocks and IMMEDIATELY load NBT
-        // Using flag 18 (2 | 16) to update clients but avoid excessive neighbor
-        // updates for now.
+        // Using flag 16 (NO_NEIGHBOR_UPDATE) to ensure all blocks are in place
+        // before any physics or survival checks are triggered.
         for (BlockData blockData : blocks) {
             BlockPos absolutePos = targetPos.offset(blockData.relativePos);
 
             if (shouldReplace(world.getBlockState(absolutePos), blockData.blockState, mode, preservedBlocks)) {
-                world.setBlock(absolutePos, blockData.blockState, 18);
+                world.setBlock(absolutePos, blockData.blockState, 16);
 
                 // Immediately load NBT if it exists
                 if (nbtMap.containsKey(absolutePos)) {
@@ -302,28 +303,23 @@ public class StructureTeleporter {
             }
         }
 
-        // Pass 2: Trigger neighbor updates
+        // Pass 3: Trigger neighbor updates
+        // Now that all blocks are in place, we can safely update neighbors
         for (BlockData blockData : blocks) {
             BlockPos absolutePos = targetPos.offset(blockData.relativePos);
             BlockState state = world.getBlockState(absolutePos);
 
             // Update neighbors at the position
             world.updateNeighborsAt(absolutePos, state.getBlock());
-
-            // Also update neighbors' neighbors to ensure full propagation (especially for
-            // redstone)
-            for (Direction direction : Direction.values()) {
-                BlockPos neighborPos = absolutePos.relative(direction);
-                world.updateNeighborsAt(neighborPos, world.getBlockState(neighborPos).getBlock());
-            }
         }
 
-        // Pass 3: Final client synchronization
-        // Pass AIR as old state to force client to redraw/re-evaluate
+        // Pass 4: Final client synchronization
+        // Ensure clients see the correctly updated blocks and their states
         for (BlockData blockData : blocks) {
             BlockPos absolutePos = targetPos.offset(blockData.relativePos);
             BlockState state = world.getBlockState(absolutePos);
-            world.sendBlockUpdated(absolutePos, Blocks.AIR.defaultBlockState(), state, 3);
+            // flag 2 = UPDATE_CLIENTS to synchronize but avoid redundant updates
+            world.sendBlockUpdated(absolutePos, Blocks.AIR.defaultBlockState(), state, 2);
         }
 
         TeleportAPI.LOGGER.info("Blocks pasted: " + blocks.size() + " at position " + targetPos);
@@ -531,7 +527,7 @@ public class StructureTeleporter {
                         }
 
                         // Set to AIR and synchronize with clients
-                        sourceWorld.setBlock(pos, Blocks.AIR.defaultBlockState(), 3);
+                        sourceWorld.destroyBlock(pos, false);
                         sourceWorld.sendBlockUpdated(pos, state, Blocks.AIR.defaultBlockState(), 3);
                     }
                 }

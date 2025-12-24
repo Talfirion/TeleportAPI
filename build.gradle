@@ -127,17 +127,29 @@ jar {
     }
 }
 
+// This part ensures that the jar task is re-obfuscated to SRG mappings
+reobf {
+    jar { }
+}
+
 publishing {
     publications {
         mavenJava(MavenPublication) {
-            artifact jar
+            artifact(file("${layout.buildDirectory.get().asFile}/reobfJar/output.jar")) {
+                builtBy tasks.reobfJar
+            }
+            pom.withXml {
+                if (asNode().dependencies.size() > 0) {
+                    asNode().dependencies.dependency.any {
+                        if (it.groupId.text() == 'net.minecraftforge' && it.artifactId.text() == 'forge') {
+                            it.parent().remove(it)
+                        }
+                    }
+                }
+            }
         }
     }
     repositories {
         mavenLocal()
-        // Если хочешь локальный файловый репозиторий:
-        // maven {
-        //     url "file:///${project.projectDir}/mcmodsrepo"
-        // }
     }
 }
