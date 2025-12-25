@@ -8,17 +8,17 @@ import org.apache.logging.log4j.Logger;
 
 @Mod(TeleportAPI.MOD_ID)
 public class TeleportAPI {
-    
+
     public static final String MOD_ID = "teleportapi";
-    public static final Logger LOGGER = LogManager.getLogger();
-    
+    public static final Logger LOGGER = LogManager.getLogger(MOD_ID);
+
     public TeleportAPI() {
         FMLJavaModLoadingContext.get().getModEventBus()
-            .addListener(this::commonSetup);
-        
+                .addListener(this::commonSetup);
+
         LOGGER.info("TeleportAPI loading!");
     }
-    
+
     private void commonSetup(final FMLCommonSetupEvent event) {
         LOGGER.info("TeleportAPI initialized!");
     }

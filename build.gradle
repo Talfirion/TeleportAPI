@@ -127,6 +127,14 @@ jar {
     }
 }
 
+processResources {
+    inputs.property 'version', project.version
+
+    filesMatching('META-INF/mods.toml') {
+        expand 'version': project.version
+    }
+}
+
 // This part ensures that the jar task is re-obfuscated to SRG mappings
 reobf {
     jar { }
