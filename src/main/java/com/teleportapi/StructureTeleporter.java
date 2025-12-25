@@ -318,17 +318,30 @@ public class StructureTeleporter {
             BlockPos absolutePos = targetPos.offset(blockData.relativePos);
             BlockState state = world.getBlockState(absolutePos);
 
-            // Update neighbors at the position
+            // Update neighbors at the position (notifies neighbors of this block)
             world.updateNeighborsAt(absolutePos, state.getBlock());
 
             /**
              * Aggressive shape update for the block itself.
-             * This ensures that blocks like grass re-evaluate their "survival" (e.g. if
-             * dirt
-             * is below).
+             * This ensures that blocks like fences or walls correctly connect to their new
+             * neighbors.
              * flag 3 = 1 (UPDATE_NEIGHBORS) | 2 (UPDATE_CLIENTS)
              */
             state.updateNeighbourShapes(world, absolutePos, 3);
+
+            /**
+             * Manual survival check for solitary blocks.
+             * This ensures that blocks like grass, torches, or redstone re-evaluate their
+             * "survival" (physics check) even if they have no neighbors to trigger an
+             * update.
+             * If the block cannot survive (e.g. grass on air), it is dropped as an item.
+             */
+            if (!state.canSurvive(world, absolutePos)) {
+                world.destroyBlock(absolutePos, true);
+            } else {
+                // If it survives, still notify it just in case of other state dependencies
+                world.neighborChanged(absolutePos, Blocks.AIR, absolutePos.below());
+            }
         }
 
         // Pass 4: Final client synchronization
