@@ -25,6 +25,9 @@ public class TeleportResult {
     private final boolean teleported;
     private final int replacedBlockCount;
     private final int skippedBlockCount;
+    private final int airBlockCount;
+    private final int solidBlockCount;
+    private final int destinationSolidBlocksLost;
     private final Map<BlockState, Integer> replacedBlocksMap;
     private final Map<BlockState, Integer> skippedBlocksMap;
     private final int teleportedEntitiesCount;
@@ -33,6 +36,7 @@ public class TeleportResult {
     public TeleportResult(boolean success, int totalBlocks, int excludedBlocks,
             Set<BlockState> excludedBlockTypes, String message, boolean teleported) {
         this(success, totalBlocks, excludedBlocks, excludedBlockTypes, message, teleported, 0, 0,
+                0, 0, 0,
                 new HashMap<>(), new HashMap<>(), 0, new ArrayList<>());
     }
 
@@ -40,7 +44,8 @@ public class TeleportResult {
             Set<BlockState> excludedBlockTypes, String message, boolean teleported,
             int replacedBlockCount, int skippedBlockCount) {
         this(success, totalBlocks, excludedBlocks, excludedBlockTypes, message, teleported,
-                replacedBlockCount, skippedBlockCount, new HashMap<>(), new HashMap<>(), 0, new ArrayList<>());
+                replacedBlockCount, skippedBlockCount, 0, totalBlocks, 0,
+                new HashMap<>(), new HashMap<>(), 0, new ArrayList<>());
     }
 
     public TeleportResult(boolean success, int totalBlocks, int excludedBlocks,
@@ -48,12 +53,14 @@ public class TeleportResult {
             int replacedBlockCount, int skippedBlockCount,
             Map<BlockState, Integer> replacedBlocksMap, Map<BlockState, Integer> skippedBlocksMap) {
         this(success, totalBlocks, excludedBlocks, excludedBlockTypes, message, teleported,
-                replacedBlockCount, skippedBlockCount, replacedBlocksMap, skippedBlocksMap, 0, new ArrayList<>());
+                replacedBlockCount, skippedBlockCount, 0, totalBlocks, 0,
+                replacedBlocksMap, skippedBlocksMap, 0, new ArrayList<>());
     }
 
     public TeleportResult(boolean success, int totalBlocks, int excludedBlocks,
             Set<BlockState> excludedBlockTypes, String message, boolean teleported,
             int replacedBlockCount, int skippedBlockCount,
+            int airBlockCount, int solidBlockCount, int destinationSolidBlocksLost,
             Map<BlockState, Integer> replacedBlocksMap, Map<BlockState, Integer> skippedBlocksMap,
             int teleportedEntitiesCount, List<String> teleportedPlayerNames) {
         this.success = success;
@@ -64,6 +71,9 @@ public class TeleportResult {
         this.teleported = teleported;
         this.replacedBlockCount = replacedBlockCount;
         this.skippedBlockCount = skippedBlockCount;
+        this.airBlockCount = airBlockCount;
+        this.solidBlockCount = solidBlockCount;
+        this.destinationSolidBlocksLost = destinationSolidBlocksLost;
         this.replacedBlocksMap = replacedBlocksMap != null ? new HashMap<>(replacedBlocksMap) : new HashMap<>();
         this.skippedBlocksMap = skippedBlocksMap != null ? new HashMap<>(skippedBlocksMap) : new HashMap<>();
         this.teleportedEntitiesCount = teleportedEntitiesCount;
@@ -105,6 +115,18 @@ public class TeleportResult {
 
     public int getSkippedBlockCount() {
         return skippedBlockCount;
+    }
+
+    public int getAirBlockCount() {
+        return airBlockCount;
+    }
+
+    public int getSolidBlockCount() {
+        return solidBlockCount;
+    }
+
+    public int getDestinationSolidBlocksLost() {
+        return destinationSolidBlocksLost;
     }
 
     public Map<BlockState, Integer> getReplacedBlocksMap() {
