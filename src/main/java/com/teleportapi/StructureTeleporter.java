@@ -62,6 +62,16 @@ public class StructureTeleporter {
     }
 
     /**
+     * Get default list of blocks that should be preserved at the destination if
+     * encountered.
+     * Usually matches the excluded blocks list to ensure critical blocks are never
+     * overwritten.
+     */
+    public static List<BlockState> getDefaultPreservedBlocks() {
+        return getDefaultExcludedBlocks();
+    }
+
+    /**
      * Check if a block state should be excluded from teleportation.
      * 
      * @param state           Block state to check
@@ -70,8 +80,13 @@ public class StructureTeleporter {
      *                        returns false)
      */
     private static boolean isExcluded(BlockState state, List<BlockState> excludedBlocks, boolean checkExclusions) {
-        if (!checkExclusions || excludedBlocks == null || excludedBlocks.isEmpty()) {
+        if (!checkExclusions) {
             return false;
+        }
+
+        // If list is null, fallback to API defaults
+        if (excludedBlocks == null) {
+            excludedBlocks = getDefaultExcludedBlocks();
         }
 
         for (BlockState excluded : excludedBlocks) {
@@ -134,6 +149,11 @@ public class StructureTeleporter {
         }
 
         if (mode == PasteMode.PRESERVE_LIST) {
+            // If list is null, fallback to API defaults
+            if (preservedBlocks == null) {
+                preservedBlocks = getDefaultPreservedBlocks();
+            }
+
             if (preservedBlocks != null) {
                 for (BlockState preserved : preservedBlocks) {
                     if (existing.is(preserved.getBlock())) {
@@ -164,6 +184,10 @@ public class StructureTeleporter {
 
     public static List<BlockData> copyStructure(Selection selection, List<BlockState> excludedBlocks,
             boolean checkExclusions, boolean includeAir) {
+        if (checkExclusions) {
+            TeleportAPI.LOGGER.info("[DEBUG] copyStructure: excludedBlocks="
+                    + (excludedBlocks == null ? "null (using defaults)" : excludedBlocks.size()));
+        }
         if (!selection.isComplete()) {
             return null;
         }
@@ -412,6 +436,12 @@ public class StructureTeleporter {
         }
         BlockPos min = selection.getMin();
         BlockPos max = selection.getMax();
+
+        TeleportAPI.LOGGER.info("[DEBUG] teleportStructure: excludedBlocks="
+                + (excludedBlocks == null ? "null (using defaults)" : excludedBlocks.size())
+                + ", preservedBlocks="
+                + (preservedBlocks == null ? "null (using defaults)" : preservedBlocks.size())
+                + ", mode=" + pasteMode);
 
         // Count metrics
         int totalBlocks = 0;
@@ -692,9 +722,11 @@ public class StructureTeleporter {
     public static void teleportByCorners(Level world, BlockPos p1, BlockPos p2, BlockPos targetPos,
             boolean checkExclusions) {
         if (checkExclusions) {
-            // get list blocks for exclusions
+            // get list blocks for exclusions and preservations
             List<BlockState> excludedBlocks = getDefaultExcludedBlocks();
-            teleportByCorners(world, p1, p2, world, targetPos, excludedBlocks, true, true, true, true, true);
+            List<BlockState> preservedBlocks = getDefaultPreservedBlocks();
+            teleportByCorners(world, p1, p2, world, targetPos, excludedBlocks, true, true, true, true, true,
+                    PasteMode.FORCE_REPLACE, preservedBlocks);
         } else {
             teleportByCorners(world, p1, p2, world, targetPos, null, true, false, true, true, true);
         }
@@ -708,10 +740,11 @@ public class StructureTeleporter {
     public static void teleportByCorners(Level sourceLevel, BlockPos p1, BlockPos p2, Level targetLevel,
             BlockPos targetPos, boolean checkExclusions) {
         if (checkExclusions) {
-            // get list blocks for exclusions
+            // get list blocks for exclusions and preservations
             List<BlockState> excludedBlocks = getDefaultExcludedBlocks();
+            List<BlockState> preservedBlocks = getDefaultPreservedBlocks();
             teleportByCorners(sourceLevel, p1, p2, targetLevel, targetPos, excludedBlocks, true, true, true, true,
-                    true);
+                    true, PasteMode.FORCE_REPLACE, preservedBlocks);
         } else {
             teleportByCorners(sourceLevel, p1, p2, targetLevel, targetPos, null, true, false, true, true, true);
         }
@@ -738,11 +771,19 @@ public class StructureTeleporter {
     public static TeleportResult teleportByCorners(Level sourceLevel, BlockPos p1, BlockPos p2, Level targetLevel,
             BlockPos targetPos, List<BlockState> excludedBlocks, boolean shouldTeleport, boolean checkExclusions,
             boolean includeAir, boolean teleportPlayers, boolean teleportEntities) {
+        return teleportByCorners(sourceLevel, p1, p2, targetLevel, targetPos, excludedBlocks, shouldTeleport,
+                checkExclusions, includeAir, teleportPlayers, teleportEntities, PasteMode.FORCE_REPLACE, null);
+    }
+
+    public static TeleportResult teleportByCorners(Level sourceLevel, BlockPos p1, BlockPos p2, Level targetLevel,
+            BlockPos targetPos, List<BlockState> excludedBlocks, boolean shouldTeleport, boolean checkExclusions,
+            boolean includeAir, boolean teleportPlayers, boolean teleportEntities, PasteMode pasteMode,
+            List<BlockState> preservedBlocks) {
         Selection selection = new Selection();
         selection.setWorld(sourceLevel);
         selection.setFromCorners(p1, p2);
         return teleportStructure(selection, targetLevel, targetPos, excludedBlocks, shouldTeleport, checkExclusions,
-                PasteMode.FORCE_REPLACE, null, includeAir, teleportPlayers, teleportEntities);
+                pasteMode, preservedBlocks, includeAir, teleportPlayers, teleportEntities);
     }
 
     /**
@@ -784,10 +825,18 @@ public class StructureTeleporter {
     public static TeleportResult teleportBySixPoints(Level sourceLevel, BlockPos[] points, Level targetLevel,
             BlockPos targetPos, List<BlockState> excludedBlocks, boolean shouldTeleport, boolean checkExclusions,
             boolean includeAir, boolean teleportPlayers, boolean teleportEntities) {
+        return teleportBySixPoints(sourceLevel, points, targetLevel, targetPos, excludedBlocks, shouldTeleport,
+                checkExclusions, includeAir, teleportPlayers, teleportEntities, PasteMode.FORCE_REPLACE, null);
+    }
+
+    public static TeleportResult teleportBySixPoints(Level sourceLevel, BlockPos[] points, Level targetLevel,
+            BlockPos targetPos, List<BlockState> excludedBlocks, boolean shouldTeleport, boolean checkExclusions,
+            boolean includeAir, boolean teleportPlayers, boolean teleportEntities, PasteMode pasteMode,
+            List<BlockState> preservedBlocks) {
         Selection selection = new Selection();
         selection.setWorld(sourceLevel);
         selection.setFromSixPoints(points);
         return teleportStructure(selection, targetLevel, targetPos, excludedBlocks, shouldTeleport, checkExclusions,
-                PasteMode.FORCE_REPLACE, null, includeAir, teleportPlayers, teleportEntities);
+                pasteMode, preservedBlocks, includeAir, teleportPlayers, teleportEntities);
     }
 }
