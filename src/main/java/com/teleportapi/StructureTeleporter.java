@@ -582,6 +582,26 @@ public class StructureTeleporter {
         }
         TeleportAPI.LOGGER.info("[TeleportAPI] Source: Removed " + removedCount + " blocks from old location");
 
+        // Pass 2.5: Trigger neighbor and shape updates for source area
+        // This ensures that blocks adjacent to the cleared area are correctly notified.
+        TeleportAPI.LOGGER.info("[TeleportAPI] Source: Triggering neighbor and shape updates for source area");
+        for (int y = max.getY(); y >= min.getY(); y--) {
+            for (int x = min.getX(); x <= max.getX(); x++) {
+                for (int z = min.getZ(); z <= max.getZ(); z++) {
+                    BlockPos pos = new BlockPos(x, y, z);
+                    BlockState state = sourceWorld.getBlockState(pos);
+
+                    // Update neighbors at the position (notifies neighbors that this block is now
+                    // AIR)
+                    sourceWorld.updateNeighborsAt(pos, state.getBlock());
+
+                    // Aggressive shape update for neighbors
+                    // flag 3 = 1 (UPDATE_NEIGHBORS) | 2 (UPDATE_CLIENTS)
+                    state.updateNeighbourShapes(sourceWorld, pos, 3);
+                }
+            }
+        }
+
         // 3. Paste in new location
         pasteStructure(blocks, targetPos, targetLevel, pasteMode, preservedBlocks);
 
