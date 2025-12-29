@@ -12,6 +12,13 @@ import java.util.Map;
  * of the cuboid.
  * For axis-aligned box, each point defines the position of a face along
  * the corresponding axis.
+ * 
+ * Internal Logic:
+ * - Stores 6 face points (one for each side of a cube)
+ * - Each face is identified by FaceType enum
+ * - Automatically calculates min/max bounding box when using
+ * setFromPoints/setFromCorners
+ * - Validates that min <= max for each axis
  */
 public class Selection {
     // Storage for cuboid face points
@@ -241,6 +248,10 @@ public class Selection {
      * @throws IllegalArgumentException if array is empty or null
      */
     public void setFromPoints(BlockPos... points) {
+        // Internal Logic:
+        // 1. Iterates through ALL provided points
+        // 2. For each coordinate axis, finds minimum and maximum
+        // 3. Creates a bounding box that contains all points
         if (points == null || points.length == 0) {
             throw new IllegalArgumentException("Points array cannot be empty!");
         }
@@ -295,6 +306,9 @@ public class Selection {
      * @param p2 Second point
      */
     public void setFromCorners(BlockPos p1, BlockPos p2) {
+        // Internal Logic:
+        // 1. Accepts two diagonal corners of the cuboid (order independent)
+        // 2. Compares coordinates to determine X_MIN/MAX, Y_MIN/MAX, Z_MIN/MAX
         if (p1 == null || p2 == null) {
             throw new IllegalArgumentException("Points cannot be null!");
         }

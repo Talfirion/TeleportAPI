@@ -1,7 +1,7 @@
 package com.teleportapi;
 
-import net.minecraft.core.BlockPos;
-import net.minecraft.nbt.CompoundTag;
+//import net.minecraft.core.BlockPos;
+//import net.minecraft.nbt.CompoundTag;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import org.junit.jupiter.api.Disabled;
@@ -22,7 +22,6 @@ import static org.junit.jupiter.api.Assertions.*;
 @Disabled("Requires Minecraft Context")
 class StructureTeleporterValidationTest {
 
-    @SuppressWarnings("unchecked")
     private BlockState createMockBlockState() {
         return (BlockState) (Object) new String("DummyBlockState-" + java.util.UUID.randomUUID());
     }
@@ -48,6 +47,7 @@ class StructureTeleporterValidationTest {
     void testGetDefaultExcludedBlocks_ContainsBedrock() {
         List<BlockState> excludedBlocks = StructureTeleporter.getDefaultExcludedBlocks();
 
+        @SuppressWarnings("null")
         boolean containsBedrock = excludedBlocks.stream()
                 .anyMatch(state -> state.is(Blocks.BEDROCK));
 
@@ -59,6 +59,7 @@ class StructureTeleporterValidationTest {
     void testGetDefaultExcludedBlocks_ContainsEndPortalFrame() {
         List<BlockState> excludedBlocks = StructureTeleporter.getDefaultExcludedBlocks();
 
+        @SuppressWarnings("null")
         boolean containsEndPortalFrame = excludedBlocks.stream()
                 .anyMatch(state -> state.is(Blocks.END_PORTAL_FRAME));
 
@@ -70,6 +71,7 @@ class StructureTeleporterValidationTest {
     void testGetDefaultExcludedBlocks_ContainsEndPortal() {
         List<BlockState> excludedBlocks = StructureTeleporter.getDefaultExcludedBlocks();
 
+        @SuppressWarnings("null")
         boolean containsEndPortal = excludedBlocks.stream()
                 .anyMatch(state -> state.is(Blocks.END_PORTAL));
 
@@ -81,6 +83,7 @@ class StructureTeleporterValidationTest {
     void testGetDefaultExcludedBlocks_ContainsEndGateway() {
         List<BlockState> excludedBlocks = StructureTeleporter.getDefaultExcludedBlocks();
 
+        @SuppressWarnings("null")
         boolean containsEndGateway = excludedBlocks.stream()
                 .anyMatch(state -> state.is(Blocks.END_GATEWAY));
         assertTrue(containsEndGateway, "Default excluded blocks should contain End Gateway");
@@ -91,6 +94,7 @@ class StructureTeleporterValidationTest {
     void testGetDefaultExcludedBlocks_ContainsReinforcedDeepslate() {
         List<BlockState> excludedBlocks = StructureTeleporter.getDefaultExcludedBlocks();
 
+        @SuppressWarnings("null")
         boolean containsReinforcedDeepslate = excludedBlocks.stream()
                 .anyMatch(state -> state.is(Blocks.REINFORCED_DEEPSLATE));
 
@@ -151,6 +155,7 @@ class StructureTeleporterValidationTest {
     void testGetDefaultPreservedBlocks_ContainsSameCriticalBlocks() {
         List<BlockState> preservedBlocks = StructureTeleporter.getDefaultPreservedBlocks();
 
+        @SuppressWarnings("null")
         boolean containsBedrock = preservedBlocks.stream()
                 .anyMatch(state -> state.is(Blocks.BEDROCK));
 

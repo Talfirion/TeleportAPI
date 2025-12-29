@@ -36,7 +36,7 @@ class TeleportResultTest {
 
     // Helper to get a single dummy object masked as BlockState (for adding to
     // immutable sets test)
-    @SuppressWarnings("unchecked")
+    @SuppressWarnings("unused")
     private BlockState createDummyBlockState() {
         return (BlockState) (Object) new String("SingleDummy-" + java.util.UUID.randomUUID());
     }

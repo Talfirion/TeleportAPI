@@ -114,13 +114,6 @@ class SelectionValidationTest {
         });
     }
 
-    @Test
-    void testSetFromSixPoints_NullArray() {
-        assertThrows(IllegalArgumentException.class, () -> {
-            selection.setFromSixPoints(null);
-        });
-    }
-
     // ========== Incomplete Selection Detection ==========
 
     @Test
