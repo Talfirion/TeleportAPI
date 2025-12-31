@@ -97,13 +97,14 @@ class TeleportResultTest {
 
         TeleportResult result = new TeleportResult(
                 true, 150, 10, excludedTypes, "Full test", true,
-                40, 20, 30, 120, 15,
+                40, 20, 10, 30, 120, 15,
                 replacedMap, skippedMap, 5, players);
 
         assertEquals(150, result.getTotalBlocks());
         assertEquals(10, result.getExcludedBlocks());
         assertEquals(40, result.getReplacedBlockCount());
         assertEquals(20, result.getSkippedBlockCount());
+        assertEquals(10, result.getSkippedByLimitCount());
         assertEquals(30, result.getAirBlockCount());
         assertEquals(120, result.getSolidBlockCount());
         assertEquals(15, result.getDestinationSolidBlocksLost());
@@ -173,7 +174,7 @@ class TeleportResultTest {
     void testBlockTypeCounting() {
         TeleportResult result = new TeleportResult(
                 true, 100, 5, new HashSet<>(), "Test", true,
-                40, 20, 30, 70, 15,
+                40, 20, 0, 30, 70, 15,
                 new HashMap<>(), new HashMap<>(), 0, new ArrayList<>());
 
         assertEquals(30, result.getAirBlockCount());
@@ -245,7 +246,7 @@ class TeleportResultTest {
 
         TeleportResult result = new TeleportResult(
                 true, 100, 0, new HashSet<>(), "Test", true,
-                0, 0, 0, 100, 0,
+                0, 0, 0, 0, 100, 0,
                 new HashMap<>(), new HashMap<>(), 5, players);
 
         assertEquals(5, result.getTeleportedEntitiesCount());
@@ -257,7 +258,7 @@ class TeleportResultTest {
     void testNoEntitiesTeleported() {
         TeleportResult result = new TeleportResult(
                 true, 100, 0, new HashSet<>(), "Test", true,
-                0, 0, 0, 100, 0,
+                0, 0, 0, 0, 100, 0,
                 new HashMap<>(), new HashMap<>(), 0, new ArrayList<>());
 
         assertEquals(0, result.getTeleportedEntitiesCount());
@@ -269,7 +270,7 @@ class TeleportResultTest {
         // 10 entities teleported, but 0 players
         TeleportResult result = new TeleportResult(
                 true, 100, 0, new HashSet<>(), "Test", true,
-                0, 0, 0, 100, 0,
+                0, 0, 0, 0, 100, 0,
                 new HashMap<>(), new HashMap<>(), 10, new ArrayList<>());
 
         assertEquals(10, result.getTeleportedEntitiesCount());
@@ -333,7 +334,7 @@ class TeleportResultTest {
 
         TeleportResult result = new TeleportResult(
                 true, 100, 0, new HashSet<>(), "Test", true,
-                0, 0, 0, 100, 0,
+                0, 0, 0, 0, 100, 0,
                 new HashMap<>(), new HashMap<>(), 1, players);
 
         // Modify original list
@@ -368,7 +369,7 @@ class TeleportResultTest {
 
         TeleportResult result = new TeleportResult(
                 true, 100, 0, new HashSet<>(), "Test", true,
-                0, 0, 0, 100, 0,
+                0, 0, 0, 0, 100, 0,
                 new HashMap<>(), new HashMap<>(), 2, players);
 
         String str = result.toString();
@@ -410,7 +411,7 @@ class TeleportResultTest {
     void testNullMapsInConstructor() {
         TeleportResult result = new TeleportResult(
                 true, 100, 0, new HashSet<>(), "Test", true,
-                0, 0, 0, 100, 0,
+                0, 0, 0, 0, 100, 0,
                 null, null, 0, null);
 
         assertNotNull(result.getReplacedBlocksMap());
@@ -437,7 +438,7 @@ class TeleportResultTest {
         // This shouldn't happen in real usage, but test robustness
         TeleportResult result = new TeleportResult(
                 true, 100, 0, new HashSet<>(), "Test", true,
-                -5, -3, 0, 100, 0,
+                -5, -3, 0, 0, 100, 0,
                 new HashMap<>(), new HashMap<>(), 0, new ArrayList<>());
 
         assertEquals(-5, result.getReplacedBlockCount());
@@ -449,7 +450,7 @@ class TeleportResultTest {
         // totalBlocks=100 but airBlockCount + solidBlockCount doesn't match
         TeleportResult result = new TeleportResult(
                 true, 100, 0, new HashSet<>(), "Test", true,
-                0, 0, 30, 50, 0,
+                0, 0, 0, 30, 50, 0,
                 new HashMap<>(), new HashMap<>(), 0, new ArrayList<>());
 
         assertEquals(100, result.getTotalBlocks());

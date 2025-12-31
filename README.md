@@ -46,6 +46,15 @@ TeleportResult result = StructureTeleporter.teleportStructure(
 if (result.isSuccess()) {
     System.out.println("Teleported " + result.getTeleportedBlocks() + " blocks");
 }
+
+// Way 2: Teleport to another dimension using ID
+StructureTeleporter.teleportStructure(
+    selection,
+    new ResourceLocation("minecraft:the_nether"), // Destination dimension ID
+    targetPos,
+    null,
+    true
+);
 ```
 
 ### Copy & Paste Separately
@@ -79,8 +88,34 @@ Provides detailed metrics after a teleport operation.
 | `getExcludedBlocks()` | Count of blocks skipped based on exclusion list |
 | `getTeleportedEntitiesCount()` | Players and entities moved within selection |
 
+## Forge Events
+
+TeleportAPI fires Forge events that allow other mods to intercept and react to teleportation. This is useful for protection mods (claims) or logging.
+
+### StructureTeleportEvent
+
+- **`Pre`**: Fired before teleportation begins. It is `@Cancelable`. If canceled, the operation is aborted.
+- **`Post`**: Fired after successful teleportation. Contains the `TeleportResult`.
+
+```java
+@SubscribeEvent
+public void onTeleportPre(StructureTeleportEvent.Pre event) {
+    if (isAreaProtected(event.getTargetLevel(), event.getTargetPos())) {
+        event.setCanceled(true); // Prevent teleportation
+    }
+}
+
+@SubscribeEvent
+public void onTeleportPost(StructureTeleportEvent.Post event) {
+    TeleportResult result = event.getTeleportResult();
+    LOGGER.info("Teleportation finished with " + result.getTeleportedBlocks() + " blocks.");
+}
+```
+
 ## Common Configuration
 
 - **Excluded Blocks**: Bedrock and portal frames are excluded by default to maintain world integrity.
 - **NBT Data**: The API automatically preserves TileEntity data (inventories, sign text, etc.).
 - **Physics**: Blocks like torches or redstone are sanitized and re-checked for "survival" at destination to prevent floating items.
+- **Dimensions**: Full support for modded dimensions. Use `DimensionHelper` to discover available dimensions or `StructureTeleporter` with `ResourceLocation` IDs for high-level teleportation.
+- **Compatibility**: Events allow integration with protection mods like FTB Chunks, MineColonies, etc.
