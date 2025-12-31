@@ -33,12 +33,18 @@ public class TeleportResult {
     private final int skippedByLimitCount;
     private final int teleportedEntitiesCount;
     private final List<String> teleportedPlayerNames;
+    private final boolean permissionDenied;
+    private final net.minecraft.core.BlockPos failedPos;
+    private final String denialReason;
+    private final double distance;
+    private final String sourceDimension;
+    private final String targetDimension;
 
     public TeleportResult(boolean success, int totalBlocks, int excludedBlocks,
             Set<BlockState> excludedBlockTypes, String message, boolean teleported) {
         this(success, totalBlocks, excludedBlocks, excludedBlockTypes, message, teleported, 0, 0,
                 0, 0, 0, 0,
-                new HashMap<>(), new HashMap<>(), 0, new ArrayList<>());
+                new HashMap<>(), new HashMap<>(), 0, new ArrayList<>(), false, null, null, 0.0, "", "");
     }
 
     public TeleportResult(boolean success, int totalBlocks, int excludedBlocks,
@@ -46,7 +52,7 @@ public class TeleportResult {
             int replacedBlockCount, int skippedBlockCount) {
         this(success, totalBlocks, excludedBlocks, excludedBlockTypes, message, teleported,
                 replacedBlockCount, skippedBlockCount, 0, 0, totalBlocks - excludedBlocks, 0,
-                new HashMap<>(), new HashMap<>(), 0, new ArrayList<>());
+                new HashMap<>(), new HashMap<>(), 0, new ArrayList<>(), false, null, null, 0.0, "", "");
     }
 
     public TeleportResult(boolean success, int totalBlocks, int excludedBlocks,
@@ -55,7 +61,7 @@ public class TeleportResult {
             Map<BlockState, Integer> replacedBlocksMap, Map<BlockState, Integer> skippedBlocksMap) {
         this(success, totalBlocks, excludedBlocks, excludedBlockTypes, message, teleported,
                 replacedBlockCount, skippedBlockCount, 0, 0, totalBlocks - excludedBlocks, 0,
-                replacedBlocksMap, skippedBlocksMap, 0, new ArrayList<>());
+                replacedBlocksMap, skippedBlocksMap, 0, new ArrayList<>(), false, null, null, 0.0, "", "");
     }
 
     public TeleportResult(boolean success, int totalBlocks, int excludedBlocks,
@@ -64,6 +70,33 @@ public class TeleportResult {
             int airBlockCount, int solidBlockCount, int destinationSolidBlocksLost,
             Map<BlockState, Integer> replacedBlocksMap, Map<BlockState, Integer> skippedBlocksMap,
             int teleportedEntitiesCount, List<String> teleportedPlayerNames) {
+        this(success, totalBlocks, excludedBlocks, excludedBlockTypes, message, teleported,
+                replacedBlockCount, skippedBlockCount, skippedByLimitCount, airBlockCount,
+                solidBlockCount, destinationSolidBlocksLost, replacedBlocksMap, skippedBlocksMap,
+                teleportedEntitiesCount, teleportedPlayerNames, false, null, null, 0.0, "", "");
+    }
+
+    public TeleportResult(boolean success, int totalBlocks, int excludedBlocks,
+            Set<BlockState> excludedBlockTypes, String message, boolean teleported,
+            int replacedBlockCount, int skippedBlockCount, int skippedByLimitCount,
+            int airBlockCount, int solidBlockCount, int destinationSolidBlocksLost,
+            Map<BlockState, Integer> replacedBlocksMap, Map<BlockState, Integer> skippedBlocksMap,
+            int teleportedEntitiesCount, List<String> teleportedPlayerNames,
+            boolean permissionDenied, net.minecraft.core.BlockPos failedPos, String denialReason) {
+        this(success, totalBlocks, excludedBlocks, excludedBlockTypes, message, teleported,
+                replacedBlockCount, skippedBlockCount, skippedByLimitCount, airBlockCount,
+                solidBlockCount, destinationSolidBlocksLost, replacedBlocksMap, skippedBlocksMap,
+                teleportedEntitiesCount, teleportedPlayerNames, permissionDenied, failedPos, denialReason, 0.0, "", "");
+    }
+
+    public TeleportResult(boolean success, int totalBlocks, int excludedBlocks,
+            Set<BlockState> excludedBlockTypes, String message, boolean teleported,
+            int replacedBlockCount, int skippedBlockCount, int skippedByLimitCount,
+            int airBlockCount, int solidBlockCount, int destinationSolidBlocksLost,
+            Map<BlockState, Integer> replacedBlocksMap, Map<BlockState, Integer> skippedBlocksMap,
+            int teleportedEntitiesCount, List<String> teleportedPlayerNames,
+            boolean permissionDenied, net.minecraft.core.BlockPos failedPos, String denialReason,
+            double distance, String sourceDimension, String targetDimension) {
         this.success = success;
         this.totalBlocks = totalBlocks;
         this.excludedBlocks = excludedBlocks;
@@ -81,6 +114,27 @@ public class TeleportResult {
         this.teleportedEntitiesCount = teleportedEntitiesCount;
         this.teleportedPlayerNames = teleportedPlayerNames != null ? new ArrayList<>(teleportedPlayerNames)
                 : new ArrayList<>();
+        this.permissionDenied = permissionDenied;
+        this.failedPos = failedPos;
+        this.denialReason = denialReason;
+        this.distance = distance;
+        this.sourceDimension = sourceDimension;
+        this.targetDimension = targetDimension;
+    }
+
+    public static TeleportResult permissionDeny(String message, int totalBlocks, int excludedCount,
+            Set<BlockState> excludedTypes, int airCount, int solidCount,
+            net.minecraft.core.BlockPos failedPos, String denialReason) {
+        return new TeleportResult(false, totalBlocks, excludedCount, excludedTypes, message, false, 0, 0, 0, airCount,
+                solidCount, 0, new HashMap<>(), new HashMap<>(), 0, new ArrayList<>(),
+                true, failedPos, denialReason, 0.0, "", "");
+    }
+
+    public static TeleportResult failure(String message, int totalBlocks, int excludedCount,
+            Set<BlockState> excludedTypes,
+            int airCount, int solidCount) {
+        return new TeleportResult(false, totalBlocks, excludedCount, excludedTypes, message, false, 0, 0, 0, airCount,
+                solidCount, 0, new HashMap<>(), new HashMap<>(), 0, new ArrayList<>());
     }
 
     public boolean isSuccess() {
@@ -151,6 +205,30 @@ public class TeleportResult {
         return Collections.unmodifiableList(teleportedPlayerNames);
     }
 
+    public boolean isPermissionDenied() {
+        return permissionDenied;
+    }
+
+    public net.minecraft.core.BlockPos getFailedPos() {
+        return failedPos;
+    }
+
+    public String getDenialReason() {
+        return denialReason;
+    }
+
+    public double getDistance() {
+        return distance;
+    }
+
+    public String getSourceDimension() {
+        return sourceDimension;
+    }
+
+    public String getTargetDimension() {
+        return targetDimension;
+    }
+
     @Override
     public String toString() {
         StringBuilder sb = new StringBuilder();
@@ -164,6 +242,9 @@ public class TeleportResult {
         sb.append(", skippedBlocks=").append(skippedBlockCount);
         sb.append(", skippedByLimit=").append(skippedByLimitCount);
         sb.append(", entitiesTeleported=").append(teleportedEntitiesCount);
+        sb.append(", distance=").append(distance);
+        sb.append(", sourceDim='").append(sourceDimension).append('\'');
+        sb.append(", targetDim='").append(targetDimension).append('\'');
         if (!teleportedPlayerNames.isEmpty()) {
             sb.append(", players=").append(teleportedPlayerNames);
         }

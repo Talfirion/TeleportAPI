@@ -88,10 +88,26 @@ Provides detailed metrics after a teleport operation.
 | `getExcludedBlocks()` | Count of blocks skipped based on exclusion list |
 | `getTeleportedEntitiesCount()` | Players and entities moved within selection |
 
-## Forge Events
+### Forge Events
+Developers can subscribe to `StructureTeleportEvent.Pre` and `Post` to react to teleportation. `Pre` is `@Cancelable`.
 
-TeleportAPI fires Forge events that allow other mods to intercept and react to teleportation. This is useful for protection mods (claims) or logging.
+### Active Permission Checking (Protection Mods)
+TeleportAPI actively verifies if a player (or machine) has permission to break blocks at the source and place blocks at the destination.
+- **`IPermissionChecker`**: Interface to add custom protection mod support.
+- **`DefaultForgeChecker`**: Simulates standard Forge `BreakEvent` and `BlockEvent.EntityPlaceEvent`.
+- **Optimization**: Uses a sampling algorithm (corners, edges, chunk centers) to check large areas efficiently.
 
+To configure/disable:
+```java
+PermissionHelper.setEnabled(false); // Disable all active checks
+PermissionHelper.setCheckSource(true); 
+PermissionHelper.setCheckTarget(true);
+```
+
+## Common Configuration
+```java
+// Check README.md for more details
+```
 ### StructureTeleportEvent
 
 - **`Pre`**: Fired before teleportation begins. It is `@Cancelable`. If canceled, the operation is aborted.
