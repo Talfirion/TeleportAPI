@@ -140,6 +140,209 @@ public class StructureTeleporter {
     }
 
     /**
+     * Identify all positions within the selection that are "enclosed" by the
+     * coverage blocks.
+     * Uses a flood-fill algorithm starting from the boundaries.
+     * 
+     * @param selection      The selection area.
+     * @param coverageBlocks List of block states that form the "hull".
+     * @return Set of BlockPos that are part of the hull or enclosed by it.
+     */
+    @SuppressWarnings("null")
+    public static Set<BlockPos> getEnclosedPositions(Selection selection, List<BlockState> coverageBlocks) {
+        return getEnclosedPositionsGeneric(selection.getMin(), selection.getMax(), coverageBlocks,
+                selection.getWorld()::getBlockState, StructureTeleporter::isBlockInList);
+    }
+
+    /**
+     * Generic version of the enclosed positions filter.
+     */
+    public static <T> Set<BlockPos> getEnclosedPositionsGeneric(BlockPos min, BlockPos max, List<T> allowedStates,
+            StateProvider<T> provider, StateMatcher<T> matcher) {
+        Set<BlockPos> outside = new java.util.HashSet<>();
+        java.util.Queue<BlockPos> queue = new java.util.LinkedList<>();
+
+        // 1. Queue up all border positions that are NOT coverage blocks
+        for (int x = min.getX(); x <= max.getX(); x++) {
+            for (int y = min.getY(); y <= max.getY(); y++) {
+                addIfOutsideGeneric(new BlockPos(x, y, min.getZ()), allowedStates, provider, matcher, outside, queue);
+                if (max.getZ() > min.getZ())
+                    addIfOutsideGeneric(new BlockPos(x, y, max.getZ()), allowedStates, provider, matcher, outside,
+                            queue);
+            }
+        }
+        for (int x = min.getX(); x <= max.getX(); x++) {
+            for (int z = min.getZ(); z <= max.getZ(); z++) {
+                addIfOutsideGeneric(new BlockPos(x, min.getY(), z), allowedStates, provider, matcher, outside, queue);
+                if (max.getY() > min.getY())
+                    addIfOutsideGeneric(new BlockPos(x, max.getY(), z), allowedStates, provider, matcher, outside,
+                            queue);
+            }
+        }
+        for (int y = min.getY(); y <= max.getY(); y++) {
+            for (int z = min.getZ(); z <= max.getZ(); z++) {
+                addIfOutsideGeneric(new BlockPos(min.getX(), y, z), allowedStates, provider, matcher, outside, queue);
+                if (max.getX() > min.getX())
+                    addIfOutsideGeneric(new BlockPos(max.getX(), y, z), allowedStates, provider, matcher, outside,
+                            queue);
+            }
+        }
+
+        // 2. Flood fill to find all reachable "open" space
+        while (!queue.isEmpty()) {
+            BlockPos current = queue.poll();
+
+            for (net.minecraft.core.Direction dir : net.minecraft.core.Direction.values()) {
+                @SuppressWarnings("null")
+                BlockPos neighbor = current.relative(dir);
+                if (isWithinBounds(neighbor, min, max) && !outside.contains(neighbor)) {
+                    if (!matcher.matches(provider.getState(neighbor), allowedStates)) {
+                        outside.add(neighbor);
+                        queue.add(neighbor);
+                    }
+                }
+            }
+        }
+
+        // 3. Everything NOT in 'outside' is 'inside' (hull or enclosed)
+        Set<BlockPos> enclosed = new java.util.HashSet<>();
+        for (int x = min.getX(); x <= max.getX(); x++) {
+            for (int y = min.getY(); y <= max.getY(); y++) {
+                for (int z = min.getZ(); z <= max.getZ(); z++) {
+                    BlockPos pos = new BlockPos(x, y, z);
+                    if (!outside.contains(pos)) {
+                        enclosed.add(pos);
+                    }
+                }
+            }
+        }
+
+        return enclosed;
+    }
+
+    private static <T> void addIfOutsideGeneric(BlockPos pos, List<T> allowedStates, StateProvider<T> provider,
+            StateMatcher<T> matcher, Set<BlockPos> outside, java.util.Queue<BlockPos> queue) {
+        if (!outside.contains(pos) && !matcher.matches(provider.getState(pos), allowedStates)) {
+            outside.add(pos);
+            queue.add(pos);
+        }
+    }
+
+    @SuppressWarnings("null")
+
+    private static boolean isWithinBounds(BlockPos pos, BlockPos min, BlockPos max) {
+        return pos.getX() >= min.getX() && pos.getX() <= max.getX() &&
+                pos.getY() >= min.getY() && pos.getY() <= max.getY() &&
+                pos.getZ() >= min.getZ() && pos.getZ() <= max.getZ();
+    }
+
+    /**
+     * Check if all blocks on the faces of the selection are of the specified types.
+     * Coverage requires at least one block thickness on each of the 6 sides.
+     * 
+     * @param selection      The selection area to check.
+     * @param coverageBlocks List of block states that are allowed as coverage.
+     * @return true if the area is fully covered, false otherwise.
+     */
+    public static boolean isAreaCovered(Selection selection, List<BlockState> coverageBlocks) {
+        if (getEnclosedPositions(selection, coverageBlocks).isEmpty()) {
+            return false;
+        }
+
+        BlockPos min = selection.getMin();
+        BlockPos max = selection.getMax();
+        Level world = selection.getWorld();
+
+        return isAreaCovered(min, max, coverageBlocks, world::getBlockState);
+    }
+
+    /**
+     * Functional interface for providing block states at specific positions.
+     */
+    @FunctionalInterface
+    public interface BlockStateProvider {
+        BlockState getBlockState(BlockPos pos);
+    }
+
+    /**
+     * Internal implementation of coverage check using a BlockStateProvider.
+     */
+    public static boolean isAreaCovered(BlockPos min, BlockPos max, List<BlockState> coverageBlocks,
+            BlockStateProvider provider) {
+        return isAreaCoveredGeneric(min, max, coverageBlocks, provider::getBlockState,
+                StructureTeleporter::isBlockInList);
+    }
+
+    /**
+     * Functional interface for checking if an object matches a list of allowed
+     * objects.
+     */
+    @FunctionalInterface
+    public interface StateMatcher<T> {
+        boolean matches(T state, List<T> allowed);
+    }
+
+    /**
+     * Functional interface for getting a state at a position.
+     */
+    @FunctionalInterface
+    public interface StateProvider<T> {
+        T getState(BlockPos pos);
+    }
+
+    /**
+     * Generic implementation of coverage check.
+     */
+    public static <T> boolean isAreaCoveredGeneric(BlockPos min, BlockPos max, List<T> allowedStates,
+            StateProvider<T> provider, StateMatcher<T> matcher) {
+        if (allowedStates == null || allowedStates.isEmpty()) {
+            return true;
+        }
+
+        // Check each of the 6 faces
+        for (int x = min.getX(); x <= max.getX(); x++) {
+            for (int y = min.getY(); y <= max.getY(); y++) {
+                // Front and Back faces (Z_MIN and Z_MAX)
+                if (!matcher.matches(provider.getState(new BlockPos(x, y, min.getZ())), allowedStates) ||
+                        !matcher.matches(provider.getState(new BlockPos(x, y, max.getZ())), allowedStates)) {
+                    return false;
+                }
+            }
+        }
+
+        for (int x = min.getX(); x <= max.getX(); x++) {
+            for (int z = min.getZ(); z <= max.getZ(); z++) {
+                // Top and Bottom faces (Y_MIN and Y_MAX)
+                if (!matcher.matches(provider.getState(new BlockPos(x, min.getY(), z)), allowedStates) ||
+                        !matcher.matches(provider.getState(new BlockPos(x, max.getY(), z)), allowedStates)) {
+                    return false;
+                }
+            }
+        }
+
+        for (int y = min.getY(); y <= max.getY(); y++) {
+            for (int z = min.getZ(); z <= max.getZ(); z++) {
+                // Left and Right faces (X_MIN and X_MAX)
+                if (!matcher.matches(provider.getState(new BlockPos(min.getX(), y, z)), allowedStates) ||
+                        !matcher.matches(provider.getState(new BlockPos(max.getX(), y, z)), allowedStates)) {
+                    return false;
+                }
+            }
+        }
+
+        return true;
+    }
+
+    private static boolean isBlockInList(BlockState state, List<BlockState> list) {
+        for (BlockState allowed : list) {
+            if (state.getBlock() == allowed.getBlock()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
      * Check if a block at the target should be replaced by the incoming block based
      * on the mode.
      */
@@ -199,9 +402,14 @@ public class StructureTeleporter {
         return copyStructure(selection, excludedBlocks, checkExclusions, true);
     }
 
-    @SuppressWarnings("null")
     public static List<BlockData> copyStructure(Selection selection, List<BlockState> excludedBlocks,
             boolean checkExclusions, boolean includeAir) {
+        return copyStructure(selection, excludedBlocks, checkExclusions, includeAir, null);
+    }
+
+    @SuppressWarnings("null")
+    public static List<BlockData> copyStructure(Selection selection, List<BlockState> excludedBlocks,
+            boolean checkExclusions, boolean includeAir, Set<BlockPos> enclosedPositions) {
 
         if (!selection.isComplete()) {
             return null;
@@ -218,6 +426,12 @@ public class StructureTeleporter {
             for (int y = min.getY(); y <= max.getY(); y++) {
                 for (int z = min.getZ(); z <= max.getZ(); z++) {
                     BlockPos pos = new BlockPos(x, y, z);
+
+                    // Coverage filter check
+                    if (enclosedPositions != null && !enclosedPositions.contains(pos)) {
+                        continue;
+                    }
+
                     BlockState state = world.getBlockState(pos);
 
                     // Skip air if not included
@@ -382,40 +596,40 @@ public class StructureTeleporter {
     // new one)
     public static void teleportStructure(Selection selection, BlockPos targetPos) {
         teleportStructure(selection, selection.getWorld(), targetPos, null, true, true, PasteMode.FORCE_REPLACE, null,
-                true, true, true, null);
+                true, true, true, null, null);
     }
 
     public static TeleportResult teleportStructure(Selection selection, BlockPos targetPos,
             List<BlockState> excludedBlocks, boolean shouldTeleport) {
         return teleportStructure(selection, selection.getWorld(), targetPos, excludedBlocks, shouldTeleport, true,
-                PasteMode.FORCE_REPLACE, null, true, true, true, null);
+                PasteMode.FORCE_REPLACE, null, true, true, true, null, null);
     }
 
     public static TeleportResult teleportStructure(Selection selection, BlockPos targetPos,
             List<BlockState> excludedBlocks, boolean shouldTeleport, boolean checkExclusions) {
         return teleportStructure(selection, selection.getWorld(), targetPos, excludedBlocks, shouldTeleport,
-                checkExclusions, PasteMode.FORCE_REPLACE, null, true, true, true, null);
+                checkExclusions, PasteMode.FORCE_REPLACE, null, true, true, true, null, null);
     }
 
     public static TeleportResult teleportStructure(Selection selection, Level targetLevel,
             BlockPos targetPos, List<BlockState> excludedBlocks, boolean shouldTeleport,
             boolean checkExclusions) {
         return teleportStructure(selection, targetLevel, targetPos, excludedBlocks, shouldTeleport, checkExclusions,
-                PasteMode.FORCE_REPLACE, null, true, true, true, null);
+                PasteMode.FORCE_REPLACE, null, true, true, true, null, null);
     }
 
     public static TeleportResult teleportStructure(Selection selection, Level targetLevel, BlockPos targetPos,
             List<BlockState> excludedBlocks, boolean shouldTeleport, boolean checkExclusions,
             PasteMode pasteMode, List<BlockState> preservedBlocks) {
         return teleportStructure(selection, targetLevel, targetPos, excludedBlocks, shouldTeleport, checkExclusions,
-                pasteMode, preservedBlocks, true, true, true, null);
+                pasteMode, preservedBlocks, true, true, true, null, null);
     }
 
     public static TeleportResult teleportStructure(Selection selection, Level targetLevel, BlockPos targetPos,
             List<BlockState> excludedBlocks, boolean shouldTeleport, boolean checkExclusions,
             PasteMode pasteMode, List<BlockState> preservedBlocks, boolean includeAir) {
         return teleportStructure(selection, targetLevel, targetPos, excludedBlocks, shouldTeleport, checkExclusions,
-                pasteMode, preservedBlocks, includeAir, true, true, null);
+                pasteMode, preservedBlocks, includeAir, true, true, null, null);
     }
 
     public static TeleportResult teleportStructure(Selection selection, Level targetLevel, BlockPos targetPos,
@@ -423,7 +637,15 @@ public class StructureTeleporter {
             PasteMode pasteMode, List<BlockState> preservedBlocks, boolean includeAir,
             boolean teleportPlayers, boolean teleportEntities) {
         return teleportStructure(selection, targetLevel, targetPos, excludedBlocks, shouldTeleport, checkExclusions,
-                pasteMode, preservedBlocks, includeAir, teleportPlayers, teleportEntities, null);
+                pasteMode, preservedBlocks, includeAir, teleportPlayers, teleportEntities, null, null);
+    }
+
+    public static TeleportResult teleportStructure(Selection selection, Level targetLevel, BlockPos targetPos,
+            List<BlockState> excludedBlocks, boolean shouldTeleport, boolean checkExclusions,
+            PasteMode pasteMode, List<BlockState> preservedBlocks, boolean includeAir,
+            boolean teleportPlayers, boolean teleportEntities, @org.jetbrains.annotations.Nullable Player player) {
+        return teleportStructure(selection, targetLevel, targetPos, excludedBlocks, shouldTeleport, checkExclusions,
+                pasteMode, preservedBlocks, includeAir, teleportPlayers, teleportEntities, player, null);
     }
 
     public static TeleportResult teleportStructure(Selection selection,
@@ -440,7 +662,7 @@ public class StructureTeleporter {
         }
 
         return teleportStructure(selection, targetLevel, targetPos, excludedBlocks, shouldTeleport, true,
-                PasteMode.FORCE_REPLACE, null, true, true, true, null);
+                PasteMode.FORCE_REPLACE, null, true, true, true, null, null);
     }
 
     /**
@@ -450,7 +672,8 @@ public class StructureTeleporter {
     public static TeleportResult teleportStructure(Selection selection, Level targetLevel, BlockPos targetPos,
             List<BlockState> excludedBlocks, boolean shouldTeleport, boolean checkExclusions,
             PasteMode pasteMode, List<BlockState> preservedBlocks, boolean includeAir,
-            boolean teleportPlayers, boolean teleportEntities, @org.jetbrains.annotations.Nullable Player player) {
+            boolean teleportPlayers, boolean teleportEntities, @org.jetbrains.annotations.Nullable Player player,
+            @org.jetbrains.annotations.Nullable Set<BlockPos> coverageBlocks) { // Changed to Set<BlockPos>
         if (!selection.isComplete()) {
             TeleportAPI.LOGGER.warn("Selection not complete!");
             return new TeleportResult(false, 0, 0, new HashSet<>(),
@@ -463,6 +686,18 @@ public class StructureTeleporter {
         }
         BlockPos min = selection.getMin();
         BlockPos max = selection.getMax();
+
+        // Coverage filter
+        Set<BlockPos> enclosedPositions = null;
+        if (coverageBlocks != null && !coverageBlocks.isEmpty()) {
+            enclosedPositions = coverageBlocks; // Directly use the provided set
+            if (enclosedPositions.isEmpty()) {
+                TeleportAPI.LOGGER.warn("Teleportation denied: No blocks identified as part of a ship hull/interior.");
+                return TeleportResult.failure(
+                        "Teleportation denied: No blocks identified as part of a ship hull/interior.", 0, 0,
+                        new HashSet<>(), 0, 0);
+            }
+        }
 
         // Count metrics
         int totalBlocks = 0;
@@ -489,6 +724,11 @@ public class StructureTeleporter {
                 for (int z = min.getZ(); z <= max.getZ(); z++) {
                     BlockPos pos = new BlockPos(x, y, z);
                     BlockState state = sourceWorld.getBlockState(pos);
+
+                    // Apply enclosedPositions filter during counting
+                    if (enclosedPositions != null && !enclosedPositions.contains(pos)) {
+                        continue;
+                    }
 
                     if (state.isAir()) {
                         if (includeAir) {
@@ -528,6 +768,11 @@ public class StructureTeleporter {
                 for (int z = min.getZ(); z <= max.getZ(); z++) {
                     BlockPos srcPos = new BlockPos(x, y, z);
                     BlockState srcState = sourceWorld.getBlockState(srcPos);
+
+                    // Apply enclosedPositions filter during counting
+                    if (enclosedPositions != null && !enclosedPositions.contains(srcPos)) {
+                        continue;
+                    }
 
                     if (srcState.isAir() && !includeAir) {
                         continue;
@@ -651,10 +896,12 @@ public class StructureTeleporter {
         }
         // -----------------------
 
-        // 1. Copy structure (this will skip excluded blocks)
-        List<BlockData> blocks = copyStructure(selection, excludedBlocks, checkExclusions, includeAir);
+        // Third pass: actual teleportation
+        // Use the filter during copy
+        List<BlockData> blocksToMove = copyStructure(selection, excludedBlocks, checkExclusions, includeAir,
+                enclosedPositions);
 
-        if (blocks == null || blocks.isEmpty()) {
+        if (blocksToMove == null || blocksToMove.isEmpty()) {
             return new TeleportResult(false, totalBlocks, excludedCount, excludedTypes,
                     "No blocks to teleport after exclusions", false, 0, 0, 0,
                     airBlockCount, solidBlockCount, 0,
@@ -669,6 +916,12 @@ public class StructureTeleporter {
             for (int x = min.getX(); x <= max.getX(); x++) {
                 for (int z = min.getZ(); z <= max.getZ(); z++) {
                     BlockPos pos = new BlockPos(x, y, z);
+
+                    // Coverage filter check
+                    if (enclosedPositions != null && !enclosedPositions.contains(pos)) {
+                        continue;
+                    }
+
                     BlockState state = sourceWorld.getBlockState(pos);
 
                     if (!isExcluded(state, excludedBlocks, checkExclusions)) {
@@ -690,6 +943,12 @@ public class StructureTeleporter {
             for (int x = min.getX(); x <= max.getX(); x++) {
                 for (int z = min.getZ(); z <= max.getZ(); z++) {
                     BlockPos pos = new BlockPos(x, y, z);
+
+                    // Coverage filter check
+                    if (enclosedPositions != null && !enclosedPositions.contains(pos)) {
+                        continue;
+                    }
+
                     BlockState state = sourceWorld.getBlockState(pos);
 
                     // Update neighbors at the position (notifies neighbors that this block is now
@@ -704,7 +963,7 @@ public class StructureTeleporter {
         }
 
         // 3. Paste in new location
-        pasteStructure(blocks, targetPos, targetLevel, pasteMode, preservedBlocks);
+        pasteStructure(blocksToMove, targetPos, targetLevel, pasteMode, preservedBlocks);
 
         // 4. Teleport entities
         List<String> teleportedPlayers = new ArrayList<>();
