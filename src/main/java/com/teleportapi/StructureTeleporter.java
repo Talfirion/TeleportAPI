@@ -517,6 +517,11 @@ public class StructureTeleporter {
         for (int i = blocks.size() - 1; i >= 0; i--) {
             BlockData blockData = blocks.get(i);
             BlockPos absolutePos = targetPos.offset(blockData.relativePos);
+
+            if (isOutsideHeightLimits(absolutePos, world.getMinBuildHeight(), world.getMaxBuildHeight())) {
+                continue;
+            }
+
             BlockState existingState = world.getBlockState(absolutePos);
 
             if (shouldReplace(existingState, blockData.blockState, mode, preservedBlocks)) {
@@ -531,6 +536,10 @@ public class StructureTeleporter {
 
         for (BlockData blockData : blocks) {
             BlockPos absolutePos = targetPos.offset(blockData.relativePos);
+
+            if (isOutsideHeightLimits(absolutePos, world.getMinBuildHeight(), world.getMaxBuildHeight())) {
+                continue;
+            }
 
             if (shouldReplace(world.getBlockState(absolutePos), blockData.blockState, mode, preservedBlocks)) {
                 world.setBlock(absolutePos, blockData.blockState, 16);
@@ -555,6 +564,11 @@ public class StructureTeleporter {
 
         for (BlockData blockData : blocks) {
             BlockPos absolutePos = targetPos.offset(blockData.relativePos);
+
+            if (isOutsideHeightLimits(absolutePos, world.getMinBuildHeight(), world.getMaxBuildHeight())) {
+                continue;
+            }
+
             BlockState state = world.getBlockState(absolutePos);
 
             // Update neighbors at the position (notifies neighbors of this block)
@@ -585,6 +599,11 @@ public class StructureTeleporter {
 
         for (BlockData blockData : blocks) {
             BlockPos absolutePos = targetPos.offset(blockData.relativePos);
+
+            if (isOutsideHeightLimits(absolutePos, world.getMinBuildHeight(), world.getMaxBuildHeight())) {
+                continue;
+            }
+
             BlockState state = world.getBlockState(absolutePos);
             // flag 2 = UPDATE_CLIENTS to synchronize but avoid redundant updates
             world.sendBlockUpdated(absolutePos, Blocks.AIR.defaultBlockState(), state, 2);
@@ -908,100 +927,121 @@ public class StructureTeleporter {
                     new HashMap<>(), new HashMap<>(), 0, new ArrayList<>());
         }
 
-        @SuppressWarnings("unused")
-        int removedCount = 0;
-        // Iterate Top-to-Bottom to ensure dependent blocks are removed before their
-        // support
-        for (int y = max.getY(); y >= min.getY(); y--) {
-            for (int x = min.getX(); x <= max.getX(); x++) {
-                for (int z = min.getZ(); z <= max.getZ(); z++) {
-                    BlockPos pos = new BlockPos(x, y, z);
-
-                    // Coverage filter check
-                    if (enclosedPositions != null && !enclosedPositions.contains(pos)) {
-                        continue;
-                    }
-
-                    BlockState state = sourceWorld.getBlockState(pos);
-
-                    if (!isExcluded(state, excludedBlocks, checkExclusions)) {
-                        /*
-                         * We use flag 2 (UPDATE_CLIENTS), 16 (NO_NEIGHBOR_UPDATE), 32
-                         * (PREVENT_NEIGHBOR_REACTIONS)
-                         * and 64 (IS_MOVING) to prevent dependent blocks (redstone, torches, etc.)
-                         * from dropping as items during the removal process while keeping the client in
-                         * sync.
-                         */
-                        sourceWorld.setBlock(pos, Blocks.AIR.defaultBlockState(), 2 | 16 | 32 | 64);
-                        removedCount++;
-                    }
-                }
-            }
-        }
-
-        for (int y = max.getY(); y >= min.getY(); y--) {
-            for (int x = min.getX(); x <= max.getX(); x++) {
-                for (int z = min.getZ(); z <= max.getZ(); z++) {
-                    BlockPos pos = new BlockPos(x, y, z);
-
-                    // Coverage filter check
-                    if (enclosedPositions != null && !enclosedPositions.contains(pos)) {
-                        continue;
-                    }
-
-                    BlockState state = sourceWorld.getBlockState(pos);
-
-                    // Update neighbors at the position (notifies neighbors that this block is now
-                    // AIR)
-                    sourceWorld.updateNeighborsAt(pos, state.getBlock());
-
-                    // Aggressive shape update for neighbors
-                    // flag 3 = 1 (UPDATE_NEIGHBORS) | 2 (UPDATE_CLIENTS)
-                    state.updateNeighbourShapes(sourceWorld, pos, 3);
-                }
-            }
-        }
-
-        // 3. Paste in new location
-        pasteStructure(blocksToMove, targetPos, targetLevel, pasteMode, preservedBlocks);
-
         // 4. Teleport entities
         List<String> teleportedPlayers = new ArrayList<>();
-        for (EntityData info : entitiesToTeleport) {
-            double targetX = targetPos.getX() + info.relX;
-            double targetY = targetPos.getY() + info.relY;
-            double targetZ = targetPos.getZ() + info.relZ;
+        try {
+            @SuppressWarnings("unused")
+            int removedCount = 0;
+            // Iterate Top-to-Bottom to ensure dependent blocks are removed before their
+            // support
+            for (int y = max.getY(); y >= min.getY(); y--) {
+                for (int x = min.getX(); x <= max.getX(); x++) {
+                    for (int z = min.getZ(); z <= max.getZ(); z++) {
+                        BlockPos pos = new BlockPos(x, y, z);
 
-            if (targetLevel != sourceWorld && info.entity instanceof ServerPlayer serverPlayer) {
-                // Cross-dimensional player teleportation
-                if (targetLevel instanceof ServerLevel serverLevel) {
-                    serverPlayer.teleportTo(serverLevel, targetX, targetY, targetZ, serverPlayer.getYRot(),
-                            serverPlayer.getXRot());
+                        // Coverage filter check
+                        if (enclosedPositions != null && !enclosedPositions.contains(pos)) {
+                            continue;
+                        }
+
+                        BlockState state = sourceWorld.getBlockState(pos);
+
+                        if (!isExcluded(state, excludedBlocks, checkExclusions)) {
+                            /*
+                             * We use flag 2 (UPDATE_CLIENTS), 16 (NO_NEIGHBOR_UPDATE), 32
+                             * (PREVENT_NEIGHBOR_REACTIONS)
+                             * and 64 (IS_MOVING) to prevent dependent blocks (redstone, torches, etc.)
+                             * from dropping as items during the removal process while keeping the client in
+                             * sync.
+                             */
+                            sourceWorld.setBlock(pos, Blocks.AIR.defaultBlockState(), 2 | 16 | 32 | 64);
+                            removedCount++;
+                        }
+                    }
                 }
-            } else {
-                // Regular teleportation or dimension change for non-players
-                info.entity.teleportTo(targetX, targetY, targetZ);
-                if (targetLevel != sourceWorld) {
-                    info.entity.changeDimension((ServerLevel) targetLevel);
+            }
+
+            for (int y = max.getY(); y >= min.getY(); y--) {
+                for (int x = min.getX(); x <= max.getX(); x++) {
+                    for (int z = min.getZ(); z <= max.getZ(); z++) {
+                        BlockPos pos = new BlockPos(x, y, z);
+
+                        // Coverage filter check
+                        if (enclosedPositions != null && !enclosedPositions.contains(pos)) {
+                            continue;
+                        }
+
+                        BlockState state = sourceWorld.getBlockState(pos);
+
+                        // Update neighbors at the position (notifies neighbors that this block is now
+                        // AIR)
+                        sourceWorld.updateNeighborsAt(pos, state.getBlock());
+
+                        // Aggressive shape update for neighbors
+                        // flag 3 = 1 (UPDATE_NEIGHBORS) | 2 (UPDATE_CLIENTS)
+                        state.updateNeighbourShapes(sourceWorld, pos, 3);
+                    }
                 }
             }
 
-            if (info.playerName != null) {
-                teleportedPlayers.add(info.playerName);
-            }
-        }
+            // 3. Paste in new location
+            pasteStructure(blocksToMove, targetPos, targetLevel, pasteMode, preservedBlocks);
 
-        message.append("Structure teleported successfully. ")
-                .append(totalBlocks - excludedCount).append(" block(s) moved to ").append(targetPos).append(".");
+            // 4. Teleport entities
+            for (EntityData info : entitiesToTeleport) {
+                double targetX = targetPos.getX() + info.relX;
+                double targetY = targetPos.getY() + info.relY;
+                double targetZ = targetPos.getZ() + info.relZ;
 
-        if (entitiesToTeleport.size() > 0) {
-            message.append("\nEntities Teleported: ").append(entitiesToTeleport.size());
-            for (String pName : teleportedPlayers) {
-                message.append("\n  - teleported player \"").append(pName).append("\"");
+                if (targetLevel != sourceWorld && info.entity instanceof ServerPlayer serverPlayer) {
+                    // Cross-dimensional player teleportation
+                    if (targetLevel instanceof ServerLevel serverLevel) {
+                        serverPlayer.teleportTo(serverLevel, targetX, targetY, targetZ, serverPlayer.getYRot(),
+                                serverPlayer.getXRot());
+                    }
+                } else {
+                    // Regular teleportation or dimension change for non-players
+                    info.entity.teleportTo(targetX, targetY, targetZ);
+                    if (targetLevel != sourceWorld) {
+                        info.entity.changeDimension((ServerLevel) targetLevel);
+                    }
+                }
+
+                if (info.playerName != null) {
+                    teleportedPlayers.add(info.playerName);
+                }
             }
-            int nonPlayers = entitiesToTeleport.size() - teleportedPlayers.size();
-            if (nonPlayers > 0) {
-                message.append("\n  - teleported ").append(nonPlayers).append(" other entities");
+
+            message.append("Structure teleported successfully. ")
+                    .append(totalBlocks - excludedCount).append(" block(s) moved to ").append(targetPos).append(".");
+
+            if (entitiesToTeleport.size() > 0) {
+                message.append("\nEntities Teleported: ").append(entitiesToTeleport.size());
+                for (String pName : teleportedPlayers) {
+                    message.append("\n  - teleported player \"").append(pName).append("\"");
+                }
+                int nonPlayers = entitiesToTeleport.size() - teleportedPlayers.size();
+                if (nonPlayers > 0) {
+                    message.append("\n  - teleported ").append(nonPlayers).append(" other entities");
+                }
+            }
+        } catch (Exception e) {
+            TeleportAPI.LOGGER.error("Teleportation failed! Attempting rollback. Error: " + e.getMessage(), e);
+
+            // ROLLBACK: Restore original blocks to source location
+            try {
+                pasteStructure(blocksToMove, min, sourceWorld, PasteMode.FORCE_REPLACE, null);
+                return TeleportResult.failure("Teleportation failed due to an error: " + e.getMessage()
+                        + ". Rollback successful - original structure restored.", totalBlocks, excludedCount,
+                        excludedTypes,
+                        airBlockCount, solidBlockCount);
+            } catch (Exception rollbackError) {
+                TeleportAPI.LOGGER.error("ROLLBACK FAILED! Structure may be lost or fragmented! Error: "
+                        + rollbackError.getMessage(), rollbackError);
+                return TeleportResult.failure("CRITICAL ERROR: Teleportation failed and ROLLBACK ALSO FAILED! "
+                        + "Error: " + e.getMessage() + ". Rollback Error: " + rollbackError.getMessage(), totalBlocks,
+                        excludedCount, excludedTypes,
+                        airBlockCount, solidBlockCount);
             }
         }
 
