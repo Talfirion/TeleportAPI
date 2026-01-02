@@ -1,137 +1,124 @@
 # TeleportAPI
 
-TeleportAPI is a library for Minecraft Forge 1.20.1 that provides functionality for selecting and teleporting structures.
+TeleportAPI is a powerful library for Minecraft Forge 1.20.1 that provides a structured and efficient way to select, copy, and teleport structures across the world and dimensions.
 
-## Selection
+## 🚀 Basic Usage (Simple Introduction)
 
-The `Selection` class defines a cuboid region in the world.
+For most use cases, you can perform a teleportation in just a few lines of code.
+
+### 1. Defining a Selection
+The `Selection` class defines a cuboid region. The most common way to create one is from two diagonal corners.
 
 ```java
 Selection selection = new Selection();
 selection.setWorld(level);
-
-// Way 1: From two diagonal corners (most common)
 selection.setFromCorners(new BlockPos(0, 64, 0), new BlockPos(10, 74, 10));
-
-// Way 2: From arbitrary points (automatically finds min/max bounding box)
-selection.setFromPoints(pos1, pos2, pos3 ...);
-
-// Way 3: Manual face control (advanced)
-selection.setFacePoint(FaceType.X_MIN, pos); 
-// Note: manual setting requires ensuring min <= max for all axes
-
-// Utility methods
-if (selection.isComplete()) {
-    BlockPos min = selection.getMin();
-    BlockPos max = selection.getMax();
-    int volume = selection.getVolume();
-}
 ```
 
-## StructureTeleporter
-
-Handles copying, pasting, and teleportation logic.
-
-### Teleport Structure (Move)
+### 2. Simple Teleportation
+Use the high-level `teleport` methods for quick operations.
 
 ```java
-// Teleport a structure to a destination and return result
-TeleportResult result = StructureTeleporter.teleportStructure(
-    selection, 
-    targetPos, 
-    StructureTeleporter.getDefaultExcludedBlocks(), // Blocks to skip (bedrock, etc.)
-    true // Perform teleport (false for scan only)
-);
+// Teleport by corners (shorthand)
+StructureTeleporter.teleport(level, pos1, pos2, targetPos);
+
+// Teleport an existing selection
+StructureTeleporter.teleport(selection, targetPos);
+
+// Teleport a specific collection of arbitrary block positions
+Collection<BlockPos> positions = ...;
+StructureTeleporter.teleport(level, positions, targetPos);
+```
+
+### 3. Handling Results
+Every teleport operation returns a `TeleportResult`.
+
+```java
+TeleportResult result = StructureTeleporter.teleport(selection, targetPos);
 
 if (result.isSuccess()) {
-    System.out.println("Teleported " + result.getTeleportedBlocks() + " blocks");
+    System.out.println("Moved " + result.getTeleportedBlocks() + " blocks!");
+} else {
+    System.err.println("Teleport failed: " + result.getMessage());
 }
-
-// Way 2: Teleport to another dimension using ID
-StructureTeleporter.teleportStructure(
-    selection,
-    new ResourceLocation("minecraft:the_nether"), // Destination dimension ID
-    targetPos,
-    null,
-    true
-);
 ```
 
-### Copy & Paste Separately
+---
+
+## 🛠️ Advanced Teleportation (Custom Settings)
+
+For complex scenarios requiring fine-grained control, use the **Teleport Request API**.
+
+### The TeleportRequest Builder
+The `TeleportRequest` object encapsulates all possible parameters, including dimension travel, entity teleportation, and custom paste modes.
 
 ```java
-// Copy to memory relative to selection.getMin()
-List<BlockData> copied = StructureTeleporter.copyStructure(selection);
+TeleportRequest request = new TeleportRequest.Builder(selection, targetPos)
+    .targetLevel(netherLevel)     // Teleport to another dimension
+    .includeAir(false)            // Skip air blocks during move
+    .teleportEntities(true)       // Move entities along with blocks
+    .teleportPlayers(true)        // Move players if they are in the area
+    .pasteMode(PasteMode.PRESERVE_EXISTING) // Don't overwrite destination blocks
+    .checkExclusions(true)        // Skip bedrock/portals
+    .player(triggeringPlayer)     // Associate a player for permission checks
+    .build();
 
-// Paste at target location in FORCE_REPLACE mode (default)
-StructureTeleporter.pasteStructure(copied, targetPos, level);
-
-// Paste with specific mode
-StructureTeleporter.pasteStructure(
-    copied, 
-    targetPos, 
-    level, 
-    PasteMode.PRESERVE_EXISTING, // Options: FORCE_REPLACE, PRESERVE_LIST, PRESERVE_EXISTING
-    null // Custom preserved blocks list
-);
+TeleportResult result = StructureTeleporter.teleport(request);
 ```
 
-## TeleportResult
+### Custom Paste Modes
+| Mode | Description |
+|------|-------------|
+| `FORCE_REPLACE` | Standard behavior: overwrites anything at the destination. |
+| `PRESERVE_EXISTING` | Only pastes blocks into air/water; won't overwrite solid blocks. |
+| `PRESERVE_LIST` | Won't overwrite blocks specified in the `preservedBlocks` list. |
 
-Provides detailed metrics after a teleport operation.
+### Copy & Paste Separately
+If you need to store a structure in memory before pasting it later:
+
+```java
+// Copy structure to memory
+List<BlockData> data = StructureTeleporter.copyStructure(selection);
+
+// ... or copy arbitrary positions
+List<BlockData> data = StructureTeleporter.copyStructure(level, positions);
+
+// Paste later
+StructureTeleporter.pasteStructure(data, targetPos, level);
+```
+
+---
+
+## 📊 Detailed Metrics (`TeleportResult`)
+The `TeleportResult` provides granular feedback about the operation.
 
 | Method | Description |
 |--------|-------------|
-| `isSuccess()` | True if selection was complete and operation finished |
-| `getTeleportedBlocks()` | Count of non-air, non-excluded blocks moved |
-| `getReplacedBlockCount()` | Blocks at destination that were overwritten |
-| `getExcludedBlocks()` | Count of blocks skipped based on exclusion list |
-| `getTeleportedEntitiesCount()` | Players and entities moved within selection |
+| `getTeleportedBlocks()` | Count of solid blocks moved. |
+| `getReplacedBlockCount()` | Blocks deleted at destination. |
+| `getExcludedBlocks()` | Blocks skipped due to exclusion lists (e.g. Bedrock). |
+| `getSourceBlockCounts()` | Map of all `BlockState` types found in source. |
+| `getDestinationSolidBlocksLost()`| Solid blocks destroyed at destination. |
 
-### Forge Events
-Developers can subscribe to `StructureTeleportEvent.Pre` and `Post` to react to teleportation. `Pre` is `@Cancelable`.
+---
 
-### Active Permission Checking (Protection Mods)
-TeleportAPI actively verifies if a player (or machine) has permission to break blocks at the source and place blocks at the destination.
-- **`IPermissionChecker`**: Interface to add custom protection mod support.
-- **`DefaultForgeChecker`**: Simulates standard Forge `BreakEvent` and `BlockEvent.EntityPlaceEvent`.
-- **Optimization**: Uses a sampling algorithm (corners, edges, chunk centers) to check large areas efficiently.
+## 🛡️ Permissions and Safety
+The API includes built-in protection logic:
+- **Active Checks**: Verifies `BreakEvent` and `PlaceEvent` using `PermissionHelper`.
+- **Integrity**: Excludes unbreakable blocks (Bedrock, Command Blocks) by default.
+- **Rollback**: In case of a critical failure during the move, the API attempts to restore the original structure to prevent data loss.
 
-To configure/disable:
-```java
-PermissionHelper.setEnabled(false); // Disable all active checks
-PermissionHelper.setCheckSource(true); 
-PermissionHelper.setCheckTarget(true);
-```
-
-## Common Configuration
-```java
-// Check README.md for more details
-```
-### StructureTeleportEvent
-
-- **`Pre`**: Fired before teleportation begins. It is `@Cancelable`. If canceled, the operation is aborted.
-- **`Post`**: Fired after successful teleportation. Contains the `TeleportResult`.
-
+### Subscribing to Events
 ```java
 @SubscribeEvent
-public void onTeleportPre(StructureTeleportEvent.Pre event) {
-    if (isAreaProtected(event.getTargetLevel(), event.getTargetPos())) {
-        event.setCanceled(true); // Prevent teleportation
-    }
-}
-
-@SubscribeEvent
-public void onTeleportPost(StructureTeleportEvent.Post event) {
-    TeleportResult result = event.getTeleportResult();
-    LOGGER.info("Teleportation finished with " + result.getTeleportedBlocks() + " blocks.");
+public void onTeleport(StructureTeleportEvent.Pre event) {
+    // Cancel based on custom logic
+    if (areaIsRestricted(event)) event.setCanceled(true);
 }
 ```
 
-## Common Configuration
-
-- **Excluded Blocks**: Bedrock and portal frames are excluded by default to maintain world integrity.
-- **NBT Data**: The API automatically preserves TileEntity data (inventories, sign text, etc.).
-- **Physics**: Blocks like torches or redstone are sanitized and re-checked for "survival" at destination to prevent floating items.
-- **Dimensions**: Full support for modded dimensions. Use `DimensionHelper` to discover available dimensions or `StructureTeleporter` with `ResourceLocation` IDs for high-level teleportation.
-- **Compatibility**: Events allow integration with protection mods like FTB Chunks, MineColonies, etc.
+## 📦 Dimension Support
+Use `DimensionHelper` for easy cross-dimension operations:
+```java
+ServerLevel target = DimensionHelper.getServerLevel(server, "minecraft:the_nether");
+```

@@ -316,17 +316,17 @@ class StructureTeleporterValidationTest {
 
     @Test
     void testPasteMode_ForceReplaceExists() {
-        assertNotNull(StructureTeleporter.PasteMode.FORCE_REPLACE);
+        assertNotNull(PasteMode.FORCE_REPLACE);
     }
 
     @Test
     void testPasteMode_PreserveListExists() {
-        assertNotNull(StructureTeleporter.PasteMode.PRESERVE_LIST);
+        assertNotNull(PasteMode.PRESERVE_LIST);
     }
 
     @Test
     void testPasteMode_PreserveExistingExists() {
-        assertNotNull(StructureTeleporter.PasteMode.PRESERVE_EXISTING);
+        assertNotNull(PasteMode.PRESERVE_EXISTING);
     }
 
     // ========== CheckExclusions Flag Tests ==========
