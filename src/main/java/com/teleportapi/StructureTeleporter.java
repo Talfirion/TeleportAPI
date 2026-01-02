@@ -21,7 +21,6 @@ import net.minecraft.world.level.ChunkPos;
 
 import com.teleportapi.event.StructureTeleportEvent;
 import net.minecraftforge.common.MinecraftForge;
-import org.jetbrains.annotations.Nullable;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
@@ -676,101 +675,6 @@ public class StructureTeleporter {
     }
 
     /**
-     * Teleport a specific set of positions to a new location.
-     * This is a high-level API method that builds a TeleportRequest.
-     */
-    public static TeleportResult teleport(Level world, Collection<BlockPos> positions, BlockPos targetPos) {
-        return teleportPositions(world, positions, world, targetPos, null);
-    }
-
-    /**
-     * Teleport a specific set of positions to a new location.
-     */
-    public static TeleportResult teleportPositions(Level sourceWorld, Collection<BlockPos> positions,
-            Level targetLevel, BlockPos targetPos, @org.jetbrains.annotations.Nullable Player player) {
-        if (positions == null || positions.isEmpty() || sourceWorld == null) {
-            return TeleportResult.builder().success(false).message("No positions or source world provided").build();
-        }
-
-        // Calculate bounding box for the positions
-        int minX = Integer.MAX_VALUE, minY = Integer.MAX_VALUE, minZ = Integer.MAX_VALUE;
-        int maxX = Integer.MIN_VALUE, maxY = Integer.MIN_VALUE, maxZ = Integer.MIN_VALUE;
-
-        for (BlockPos pos : positions) {
-            minX = Math.min(minX, pos.getX());
-            minY = Math.min(minY, pos.getY());
-            minZ = Math.min(minZ, pos.getZ());
-            maxX = Math.max(maxX, pos.getX());
-            maxY = Math.max(maxY, pos.getY());
-            maxZ = Math.max(maxZ, pos.getZ());
-        }
-
-        Selection selection = new Selection();
-        selection.setWorld(sourceWorld);
-        selection.setFromCorners(new BlockPos(minX, minY, minZ), new BlockPos(maxX, maxY, maxZ));
-
-        TeleportRequest request = new TeleportRequest.Builder(selection, targetPos)
-                .targetLevel(targetLevel)
-                .player(player)
-                .filter(new HashSet<>(positions))
-                .build();
-
-        return teleport(request);
-    }
-
-    /**
-     * Comprehensive teleportPositions overload for legacy support.
-     */
-    public static TeleportResult teleportPositions(Level sourceWorld, Collection<BlockPos> positions,
-            Level targetLevel, BlockPos targetPos, List<BlockState> excludedBlocks, boolean shouldTeleport,
-            boolean checkExclusions, PasteMode pasteMode, List<BlockState> preservedBlocks, boolean includeAir,
-            boolean teleportPlayers, boolean teleportEntities, @org.jetbrains.annotations.Nullable Player player) {
-
-        if (positions == null || positions.isEmpty() || sourceWorld == null) {
-            return TeleportResult.builder().success(false).message("No positions or source world provided").build();
-        }
-
-        // Calculate bounding box
-        int minX = Integer.MAX_VALUE, minY = Integer.MAX_VALUE, minZ = Integer.MAX_VALUE;
-        int maxX = Integer.MIN_VALUE, maxY = Integer.MIN_VALUE, maxZ = Integer.MIN_VALUE;
-        for (BlockPos pos : positions) {
-            minX = Math.min(minX, pos.getX());
-            minY = Math.min(minY, pos.getY());
-            minZ = Math.min(minZ, pos.getZ());
-            maxX = Math.max(maxX, pos.getX());
-            maxY = Math.max(maxY, pos.getY());
-            maxZ = Math.max(maxZ, pos.getZ());
-        }
-
-        Selection selection = new Selection();
-        selection.setWorld(sourceWorld);
-        selection.setFromCorners(new BlockPos(minX, minY, minZ), new BlockPos(maxX, maxY, maxZ));
-
-        TeleportRequest request = new TeleportRequest.Builder(selection, targetPos)
-                .targetLevel(targetLevel)
-                .excludedBlocks(excludedBlocks)
-                .shouldTeleport(shouldTeleport)
-                .checkExclusions(checkExclusions)
-                .pasteMode(pasteMode)
-                .preservedBlocks(preservedBlocks)
-                .includeAir(includeAir)
-                .teleportPlayers(teleportPlayers)
-                .teleportEntities(teleportEntities)
-                .player(player)
-                .filter(new HashSet<>(positions))
-                .build();
-
-        return teleport(request);
-    }
-
-    /**
-     * Simplified teleport structure method.
-     */
-    public static void teleportStructure(Selection selection, BlockPos targetPos) {
-        teleport(selection, targetPos);
-    }
-
-    /**
      * High-level API: Teleport a selection to a target position in the same world.
      */
     public static TeleportResult teleport(Selection selection, BlockPos targetPos) {
@@ -778,54 +682,30 @@ public class StructureTeleporter {
     }
 
     /**
-     * Legacy support for teleportStructure overloads.
+     * High-level API: Teleport structure defined by two corners.
+     * Uses default parameters.
      */
-    public static TeleportResult teleportStructure(Selection selection, BlockPos targetPos,
-            List<BlockState> excludedBlocks, boolean shouldTeleport) {
-        return teleport(new TeleportRequest.Builder(selection, targetPos)
-                .excludedBlocks(excludedBlocks)
-                .shouldTeleport(shouldTeleport)
-                .build());
+    public static TeleportResult teleport(Level world, BlockPos p1, BlockPos p2, BlockPos targetPos) {
+        Selection selection = new Selection();
+        selection.setWorld(world);
+        selection.setFromCorners(p1, p2);
+        return teleport(new TeleportRequest.Builder(selection, targetPos).build());
     }
 
-    public static TeleportResult teleportStructure(Selection selection, BlockPos targetPos,
-            List<BlockState> excludedBlocks, boolean shouldTeleport, boolean checkExclusions) {
-        return teleport(new TeleportRequest.Builder(selection, targetPos)
-                .excludedBlocks(excludedBlocks)
-                .shouldTeleport(shouldTeleport)
-                .checkExclusions(checkExclusions)
-                .build());
-    }
-
-    public static TeleportResult teleportStructure(Selection selection, Level targetLevel,
-            BlockPos targetPos, List<BlockState> excludedBlocks, boolean shouldTeleport,
-            boolean checkExclusions) {
-        return teleport(new TeleportRequest.Builder(selection, targetPos)
-                .targetLevel(targetLevel)
-                .excludedBlocks(excludedBlocks)
-                .shouldTeleport(shouldTeleport)
-                .checkExclusions(checkExclusions)
-                .build());
-    }
-
-    public static TeleportResult teleportStructure(Selection selection,
-            net.minecraft.resources.ResourceLocation targetDimId,
-            BlockPos targetPos, List<BlockState> excludedBlocks, boolean shouldTeleport) {
-        if (selection.getWorld() == null || selection.getWorld().getServer() == null) {
-            return TeleportResult.builder().success(false).message("Server or World is null").build();
-        }
-
-        ServerLevel targetLevel = DimensionHelper.getServerLevel(selection.getWorld().getServer(), targetDimId);
-        if (targetLevel == null) {
-            return TeleportResult.builder().success(false).message("Target dimension not found: " + targetDimId)
+    /**
+     * High-level API: Teleport a specific collection of arbitrary block positions.
+     */
+    public static TeleportResult teleport(Level world, Collection<BlockPos> positions, BlockPos targetPos) {
+        if (positions == null || positions.isEmpty()) {
+            return TeleportResult.builder()
+                    .success(false)
+                    .message("Positions collection cannot be null or empty")
                     .build();
         }
-
-        return teleport(new TeleportRequest.Builder(selection, targetPos)
-                .targetLevel(targetLevel)
-                .excludedBlocks(excludedBlocks)
-                .shouldTeleport(shouldTeleport)
-                .build());
+        Selection selection = new Selection();
+        selection.setWorld(world);
+        selection.setFromPositions(positions);
+        return teleport(new TeleportRequest.Builder(selection, targetPos).build());
     }
 
     /**
@@ -1123,39 +1003,16 @@ public class StructureTeleporter {
     }
 
     /**
-     * High-level API: Teleport structure defined by two corners.
-     * Uses default parameters.
+     * Checks if a destination position is outside the target level's height
+     * limits.
+     *
+     * @param pos       The destination position.
+     * @param minHeight The minimum build height of the level.
+     * @param maxHeight The maximum build height of the level.
+     * @return true if the position is out of bounds.
      */
-    public static TeleportResult teleport(Level world, BlockPos p1, BlockPos p2, BlockPos targetPos) {
-        Selection selection = new Selection();
-        selection.setWorld(world);
-        selection.setFromCorners(p1, p2);
-        return teleport(new TeleportRequest.Builder(selection, targetPos).build());
-    }
-
-    /**
-     * Legacy support for legacy teleportStructure.
-     */
-    @Deprecated
-    public static TeleportResult teleportStructure(Selection selection, Level targetLevel, BlockPos targetPos,
-            List<BlockState> excludedBlocks, boolean shouldTeleport, boolean checkExclusions,
-            PasteMode pasteMode, List<BlockState> preservedBlocks, boolean includeAir,
-            boolean teleportPlayers, boolean teleportEntities, @Nullable Player player,
-            @Nullable Set<BlockPos> coverageBlocks) {
-
-        return teleport(new TeleportRequest.Builder(selection, targetPos)
-                .targetLevel(targetLevel)
-                .excludedBlocks(excludedBlocks)
-                .preservedBlocks(preservedBlocks)
-                .pasteMode(pasteMode)
-                .shouldTeleport(shouldTeleport)
-                .checkExclusions(checkExclusions)
-                .includeAir(includeAir)
-                .teleportPlayers(teleportPlayers)
-                .teleportEntities(teleportEntities)
-                .player(player)
-                .filter(coverageBlocks)
-                .build());
+    public static boolean isOutsideHeightLimits(BlockPos pos, int minHeight, int maxHeight) {
+        return pos.getY() < minHeight || pos.getY() >= maxHeight;
     }
 
     private static class EntityData {
@@ -1172,194 +1029,5 @@ public class StructureTeleporter {
             this.relZ = relZ;
             this.playerName = playerName;
         }
-    }
-
-    public static TeleportResult teleportByCorners(Level world, BlockPos p1, BlockPos p2, BlockPos targetPos) {
-        return teleportByCorners(world, p1, p2, world, targetPos, true);
-    }
-
-    public static TeleportResult teleportByCorners(Level world, BlockPos p1, BlockPos p2, BlockPos targetPos,
-            boolean checkExclusions) {
-        return teleportByCorners(world, p1, p2, world, targetPos, checkExclusions);
-    }
-
-    public static TeleportResult teleportByCorners(Level sourceLevel, BlockPos p1, BlockPos p2, Level targetLevel,
-            BlockPos targetPos) {
-        return teleportByCorners(sourceLevel, p1, p2, targetLevel, targetPos, true);
-    }
-
-    public static TeleportResult teleportByCorners(Level sourceLevel, BlockPos p1, BlockPos p2, Level targetLevel,
-            BlockPos targetPos, boolean checkExclusions) {
-        Selection selection = new Selection();
-        selection.setWorld(sourceLevel);
-        selection.setFromCorners(p1, p2);
-        return teleport(new TeleportRequest.Builder(selection, targetPos)
-                .targetLevel(targetLevel)
-                .checkExclusions(checkExclusions)
-                .build());
-    }
-
-    public static TeleportResult teleportByCorners(Level world, BlockPos p1, BlockPos p2, BlockPos targetPos,
-            List<BlockState> excludedBlocks, boolean shouldTeleport, boolean checkExclusions) {
-        return teleportByCorners(world, p1, p2, world, targetPos, excludedBlocks, shouldTeleport, checkExclusions,
-                true, true, true);
-    }
-
-    public static TeleportResult teleportByCorners(Level world, BlockPos p1, BlockPos p2, BlockPos targetPos,
-            List<BlockState> excludedBlocks, boolean shouldTeleport, boolean checkExclusions, boolean includeAir) {
-        return teleportByCorners(world, p1, p2, world, targetPos, excludedBlocks, shouldTeleport, checkExclusions,
-                includeAir, true, true);
-    }
-
-    public static TeleportResult teleportByCorners(Level sourceLevel, BlockPos p1, BlockPos p2, Level targetLevel,
-            BlockPos targetPos, List<BlockState> excludedBlocks, boolean shouldTeleport, boolean checkExclusions,
-            boolean includeAir, boolean teleportPlayers, boolean teleportEntities) {
-        return teleportByCorners(sourceLevel, p1, p2, targetLevel, targetPos, excludedBlocks, shouldTeleport,
-                checkExclusions, includeAir, teleportPlayers, teleportEntities, PasteMode.FORCE_REPLACE, null);
-    }
-
-    /**
-     * Comprehensive teleportByCorners overload for legacy support.
-     */
-    public static TeleportResult teleportByCorners(Level sourceWorld, BlockPos p1, BlockPos p2,
-            net.minecraft.resources.ResourceLocation targetDimId, BlockPos targetPos,
-            List<BlockState> excludedBlocks, boolean shouldTeleport) {
-        if (sourceWorld == null || sourceWorld.getServer() == null) {
-            return TeleportResult.builder().success(false).message("Server or World is null").build();
-        }
-
-        ServerLevel targetLevel = DimensionHelper.getServerLevel(sourceWorld.getServer(), targetDimId);
-        if (targetLevel == null) {
-            return TeleportResult.builder().success(false).message("Target dimension not found: " + targetDimId)
-                    .build();
-        }
-
-        Selection selection = new Selection();
-        selection.setWorld(sourceWorld);
-        selection.setFromCorners(p1, p2);
-        return teleport(new TeleportRequest.Builder(selection, targetPos)
-                .targetLevel(targetLevel)
-                .excludedBlocks(excludedBlocks)
-                .shouldTeleport(shouldTeleport)
-                .build());
-    }
-
-    public static TeleportResult teleportByCorners(Level sourceLevel, BlockPos p1, BlockPos p2, Level targetLevel,
-            BlockPos targetPos, List<BlockState> excludedBlocks, boolean shouldTeleport, boolean checkExclusions,
-            boolean includeAir, boolean teleportPlayers, boolean teleportEntities, PasteMode pasteMode,
-            List<BlockState> preservedBlocks) {
-        return teleportByCorners(sourceLevel, p1, p2, targetLevel, targetPos, excludedBlocks, shouldTeleport,
-                checkExclusions, includeAir, teleportPlayers, teleportEntities, pasteMode, preservedBlocks, null);
-    }
-
-    /**
-     * Comprehensive teleportByCorners overload for legacy support.
-     */
-    public static TeleportResult teleportByCorners(Level sourceLevel, BlockPos p1, BlockPos p2, Level targetLevel,
-            BlockPos targetPos, List<BlockState> excludedBlocks, boolean shouldTeleport, boolean checkExclusions,
-            boolean includeAir, boolean teleportPlayers, boolean teleportEntities, PasteMode pasteMode,
-            List<BlockState> preservedBlocks, @org.jetbrains.annotations.Nullable Player player) {
-        Selection selection = new Selection();
-        selection.setWorld(sourceLevel);
-        selection.setFromCorners(p1, p2);
-        return teleport(new TeleportRequest.Builder(selection, targetPos)
-                .targetLevel(targetLevel)
-                .excludedBlocks(excludedBlocks)
-                .shouldTeleport(shouldTeleport)
-                .checkExclusions(checkExclusions)
-                .includeAir(includeAir)
-                .teleportPlayers(teleportPlayers)
-                .teleportEntities(teleportEntities)
-                .pasteMode(pasteMode)
-                .preservedBlocks(preservedBlocks)
-                .player(player)
-                .build());
-    }
-
-    /**
-     * Checks if a destination position is outside the target level's height
-     * limits.
-     *
-     * @param pos       The destination position.
-     * @param minHeight The minimum build height of the level.
-     * @param maxHeight The maximum build height of the level.
-     * @return true if the position is out of bounds.
-     */
-    public static boolean isOutsideHeightLimits(BlockPos pos, int minHeight, int maxHeight) {
-        return pos.getY() < minHeight || pos.getY() >= maxHeight;
-    }
-
-    /**
-     * Teleport structure defined by 6 points.
-     */
-    public static TeleportResult teleportBySixPoints(Level world, BlockPos[] points, BlockPos targetPos) {
-        return teleportBySixPoints(world, points, world, targetPos, null, true, true);
-    }
-
-    public static TeleportResult teleportBySixPoints(Level sourceLevel, BlockPos[] points, Level targetLevel,
-            BlockPos targetPos) {
-        return teleportBySixPoints(sourceLevel, points, targetLevel, targetPos, null, true, true);
-    }
-
-    public static TeleportResult teleportBySixPoints(Level world, BlockPos[] points, BlockPos targetPos,
-            List<BlockState> excludedBlocks, boolean shouldTeleport) {
-        return teleportBySixPoints(world, points, world, targetPos, excludedBlocks, shouldTeleport, true);
-    }
-
-    public static TeleportResult teleportBySixPoints(Level world, BlockPos[] points, BlockPos targetPos,
-            List<BlockState> excludedBlocks, boolean shouldTeleport, boolean checkExclusions) {
-        return teleportBySixPoints(world, points, world, targetPos, excludedBlocks, shouldTeleport, checkExclusions,
-                true, true, true);
-    }
-
-    public static TeleportResult teleportBySixPoints(Level world, BlockPos[] points, BlockPos targetPos,
-            List<BlockState> excludedBlocks, boolean shouldTeleport, boolean checkExclusions, boolean includeAir) {
-        return teleportBySixPoints(world, points, world, targetPos, excludedBlocks, shouldTeleport, checkExclusions,
-                includeAir, true, true);
-    }
-
-    public static TeleportResult teleportBySixPoints(Level sourceLevel, BlockPos[] points, Level targetLevel,
-            BlockPos targetPos, List<BlockState> excludedBlocks, boolean shouldTeleport, boolean checkExclusions) {
-        return teleportBySixPoints(sourceLevel, points, targetLevel, targetPos, excludedBlocks, shouldTeleport,
-                checkExclusions, true, true, true);
-    }
-
-    public static TeleportResult teleportBySixPoints(Level sourceLevel, BlockPos[] points, Level targetLevel,
-            BlockPos targetPos, List<BlockState> excludedBlocks, boolean shouldTeleport, boolean checkExclusions,
-            boolean includeAir, boolean teleportPlayers, boolean teleportEntities) {
-        return teleportBySixPoints(sourceLevel, points, targetLevel, targetPos, excludedBlocks, shouldTeleport,
-                checkExclusions, includeAir, teleportPlayers, teleportEntities, PasteMode.FORCE_REPLACE, null);
-    }
-
-    public static TeleportResult teleportBySixPoints(Level sourceLevel, BlockPos[] points, Level targetLevel,
-            BlockPos targetPos, List<BlockState> excludedBlocks, boolean shouldTeleport, boolean checkExclusions,
-            boolean includeAir, boolean teleportPlayers, boolean teleportEntities, PasteMode pasteMode,
-            List<BlockState> preservedBlocks) {
-        return teleportBySixPoints(sourceLevel, points, targetLevel, targetPos, excludedBlocks, shouldTeleport,
-                checkExclusions, includeAir, teleportPlayers, teleportEntities, pasteMode, preservedBlocks, null);
-    }
-
-    /**
-     * Comprehensive teleportBySixPoints overload for legacy support.
-     */
-    public static TeleportResult teleportBySixPoints(Level sourceLevel, BlockPos[] points, Level targetLevel,
-            BlockPos targetPos, List<BlockState> excludedBlocks, boolean shouldTeleport, boolean checkExclusions,
-            boolean includeAir, boolean teleportPlayers, boolean teleportEntities, PasteMode pasteMode,
-            List<BlockState> preservedBlocks, @org.jetbrains.annotations.Nullable Player player) {
-        Selection selection = new Selection();
-        selection.setWorld(sourceLevel);
-        selection.setFromSixPoints(points);
-        return teleport(new TeleportRequest.Builder(selection, targetPos)
-                .targetLevel(targetLevel)
-                .excludedBlocks(excludedBlocks)
-                .shouldTeleport(shouldTeleport)
-                .checkExclusions(checkExclusions)
-                .includeAir(includeAir)
-                .teleportPlayers(teleportPlayers)
-                .teleportEntities(teleportEntities)
-                .pasteMode(pasteMode)
-                .preservedBlocks(preservedBlocks)
-                .player(player)
-                .build());
     }
 }

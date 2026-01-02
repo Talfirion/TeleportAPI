@@ -298,13 +298,6 @@ public class Selection {
                 points.length, minX, maxX, minY, maxY, minZ, maxZ));
     }
 
-    /**
-     * Set selection from two points (corners).
-     * This is the classic way of selecting a region (like in WorldEdit).
-     * 
-     * @param p1 First point
-     * @param p2 Second point
-     */
     public void setFromCorners(BlockPos p1, BlockPos p2) {
         // Internal Logic:
         // 1. Accepts two diagonal corners of the cuboid (order independent)
@@ -326,6 +319,18 @@ public class Selection {
         setFacePoint(FaceType.Y_MAX, new BlockPos(maxX, maxY, maxZ));
         setFacePoint(FaceType.Z_MIN, new BlockPos(minX, minY, minZ));
         setFacePoint(FaceType.Z_MAX, new BlockPos(maxX, maxY, maxZ));
+    }
+
+    /**
+     * Set selection from a collection of positions.
+     * 
+     * @param positions Collection of positions
+     */
+    public void setFromPositions(java.util.Collection<BlockPos> positions) {
+        if (positions == null || positions.isEmpty()) {
+            throw new IllegalArgumentException("Positions collection cannot be null or empty");
+        }
+        setFromPoints(positions.toArray(new BlockPos[0]));
     }
 
     /**

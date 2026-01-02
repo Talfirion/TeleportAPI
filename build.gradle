@@ -143,6 +143,7 @@ reobf {
 publishing {
     publications {
         mavenJava(MavenPublication) {
+            artifactId = mod_id
             artifact(file("${layout.buildDirectory.get().asFile}/reobfJar/output.jar")) {
                 builtBy tasks.reobfJar
             }

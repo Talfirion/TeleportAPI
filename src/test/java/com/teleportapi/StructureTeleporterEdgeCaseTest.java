@@ -258,14 +258,14 @@ class StructureTeleporterEdgeCaseTest {
     // ========== TeleportByCorners Edge Cases ==========
 
     @Test
-    void testTeleportByCorners_SamePoints() {
+    void testTeleport_SamePoints() {
         BlockPos point = new BlockPos(10, 20, 30);
         BlockPos target = new BlockPos(50, 60, 70);
 
         // Should create a 1x1x1 selection
         assertDoesNotThrow(() -> {
             try {
-                StructureTeleporter.teleportByCorners(null, point, point, target, false);
+                StructureTeleporter.teleport(null, point, point, target);
             } catch (NullPointerException e) {
                 // Expected due to null world
             }
@@ -273,7 +273,7 @@ class StructureTeleporterEdgeCaseTest {
     }
 
     @Test
-    void testTeleportByCorners_ExtremeDistance() {
+    void testTeleport_ExtremeDistance() {
         BlockPos p1 = new BlockPos(0, 0, 0);
         BlockPos p2 = new BlockPos(10, 10, 10);
         BlockPos farTarget = new BlockPos(1_000_000, 1_000_000, 1_000_000);
@@ -281,7 +281,7 @@ class StructureTeleporterEdgeCaseTest {
         // Should handle extreme target distances
         assertDoesNotThrow(() -> {
             try {
-                StructureTeleporter.teleportByCorners(null, p1, p2, farTarget, false);
+                StructureTeleporter.teleport(null, p1, p2, farTarget);
             } catch (NullPointerException e) {
                 // Expected due to null world
             }
@@ -291,41 +291,28 @@ class StructureTeleporterEdgeCaseTest {
     // ========== TeleportBySixPoints Edge Cases ==========
 
     @Test
-    void testTeleportBySixPoints_InsufficientPoints() {
-        BlockPos[] points = new BlockPos[3];
-        for (int i = 0; i < 3; i++) {
-            points[i] = new BlockPos(i, i, i);
-        }
+    void testTeleport_EmptyPositions() {
+        java.util.Collection<BlockPos> points = new java.util.ArrayList<>();
 
-        assertThrows(IllegalArgumentException.class, () -> {
-            StructureTeleporter.teleportBySixPoints(null, points, new BlockPos(0, 0, 0));
-        });
+        // This should not throw an exception but return a failure result if world is
+        // null
+        TeleportResult result = StructureTeleporter.teleport(null, points, new BlockPos(0, 0, 0));
+        assertNotNull(result);
+        assertFalse(result.isSuccess());
     }
 
     @Test
-    void testTeleportBySixPoints_TooManyPoints() {
-        BlockPos[] points = new BlockPos[10];
-        for (int i = 0; i < 10; i++) {
-            points[i] = new BlockPos(i, i, i);
-        }
-
-        assertThrows(IllegalArgumentException.class, () -> {
-            StructureTeleporter.teleportBySixPoints(null, points, new BlockPos(0, 0, 0));
-        });
-    }
-
-    @Test
-    void testTeleportBySixPoints_AllSamePoint() {
+    void testTeleport_AllSamePoint() {
         BlockPos point = new BlockPos(5, 10, 15);
-        BlockPos[] points = new BlockPos[6];
+        java.util.Collection<BlockPos> points = new java.util.ArrayList<>();
         for (int i = 0; i < 6; i++) {
-            points[i] = point;
+            points.add(point);
         }
 
         // Should create a single point selection
         assertDoesNotThrow(() -> {
             try {
-                StructureTeleporter.teleportBySixPoints(null, points, new BlockPos(0, 0, 0));
+                StructureTeleporter.teleport(null, points, new BlockPos(0, 0, 0));
             } catch (NullPointerException e) {
                 // Expected due to null world
             }

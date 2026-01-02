@@ -121,48 +121,31 @@ class StructureTeleporterTest {
     }
 
     @Test
-    void testTeleportByCornersCreatesSelection() {
+    void testHighLevelTeleportOverloadWithCorners() {
         BlockPos p1 = new BlockPos(0, 0, 0);
         BlockPos p2 = new BlockPos(10, 10, 10);
         BlockPos target = new BlockPos(20, 20, 20);
 
-        // This will fail without a proper Level, but we verify the method signature
-        // and that it attempts to create a Selection
-        assertDoesNotThrow(() -> {
-            try {
-                StructureTeleporter.teleportByCorners(null, p1, p2, target, false);
-            } catch (NullPointerException e) {
-                // Expected due to null world
-            }
-        });
+        // Verification of method presence and basic null world handling
+        TeleportResult result = StructureTeleporter.teleport(null, p1, p2, target);
+
+        assertNotNull(result);
+        assertFalse(result.isSuccess());
+        assertEquals("Selection not complete", result.getMessage());
     }
 
     @Test
-    void testTeleportBySixPointsWithValidArray() {
-        BlockPos[] points = new BlockPos[6];
-        for (int i = 0; i < 6; i++) {
-            points[i] = new BlockPos(i, i, i);
-        }
+    void testTeleportWithPositionsCollection() {
+        java.util.Collection<BlockPos> positions = new java.util.ArrayList<>();
+        positions.add(new BlockPos(0, 0, 0));
+        positions.add(new BlockPos(1, 1, 1));
         BlockPos target = new BlockPos(50, 50, 50);
 
-        // This will fail without a proper Level, but we verify the method accepts 6
-        // points
-        assertDoesNotThrow(() -> {
-            try {
-                StructureTeleporter.teleportBySixPoints(null, points, target);
-            } catch (NullPointerException | IllegalArgumentException e) {
-                // Expected due to null world or invalid selection
-            }
-        });
-    }
+        TeleportResult result = StructureTeleporter.teleport(null, positions, target);
 
-    @Test
-    void testTeleportBySixPointsWithNullArray() {
-        BlockPos target = new BlockPos(50, 50, 50);
-
-        assertThrows(IllegalArgumentException.class, () -> {
-            StructureTeleporter.teleportBySixPoints(null, null, target);
-        });
+        assertNotNull(result);
+        assertFalse(result.isSuccess());
+        assertEquals("Selection not complete", result.getMessage());
     }
 
     @Test
@@ -199,59 +182,15 @@ class StructureTeleporterTest {
     // basic null handling.
 
     @Test
-    void testTeleportStructureWithTargetLevel() {
+    void testTeleportWithRequest() {
         Selection selection = new Selection();
         BlockPos targetPos = new BlockPos(10, 10, 10);
+        TeleportRequest request = new TeleportRequest.Builder(selection, targetPos).build();
 
-        // Since selection is creating with new Selection(), it has no world, so
-        // isComplete is false.
-        // The method should return a failure result, not throw NPE.
-        TeleportResult result = StructureTeleporter.teleportStructure(selection, null, targetPos, null, true, true);
+        TeleportResult result = StructureTeleporter.teleport(request);
 
         assertNotNull(result);
         assertFalse(result.isSuccess());
         assertEquals("Selection not complete", result.getMessage());
-    }
-
-    @Test
-    void testTeleportByCornersWithTargetLevel() {
-        BlockPos p1 = new BlockPos(0, 0, 0);
-        BlockPos p2 = new BlockPos(10, 10, 10);
-        BlockPos target = new BlockPos(20, 20, 20);
-
-        // We must disable checkExclusions to avoid hitting Blocks.BADROCK etc which
-        // needs Bootstrap
-        assertDoesNotThrow(() -> {
-            try {
-                // Pass false for checkExclusions
-                StructureTeleporter.teleportByCorners(null, p1, p2, null, target, false);
-            } catch (NullPointerException e) {
-                // Expected NullPointerException because sourceLevel is null inside
-                // teleportByCorners -> teleportStructure -> selection.setWorld(null)
-                // Wait, teleportByCorners logic:
-                // Selection selection = new Selection(); selection.setWorld(sourceLevel);
-                // teleportStructure check selection.isComplete() -> checks world != null.
-                // It returns "Selection not complete". So NO NPE expected!
-            }
-        });
-    }
-
-    @Test
-    void testTeleportBySixPointsWithTargetLevel() {
-        BlockPos[] points = new BlockPos[6];
-        for (int i = 0; i < 6; i++) {
-            points[i] = new BlockPos(i, i, i);
-        }
-        BlockPos target = new BlockPos(50, 50, 50);
-
-        // We must disable checkExclusions to avoid hitting Blocks classes
-        assertDoesNotThrow(() -> {
-            try {
-                // Pass false for checkExclusions
-                StructureTeleporter.teleportBySixPoints(null, points, null, target, null, true, false);
-            } catch (NullPointerException | IllegalArgumentException e) {
-                // Expected
-            }
-        });
     }
 }

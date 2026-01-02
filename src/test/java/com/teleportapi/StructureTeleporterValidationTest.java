@@ -429,37 +429,14 @@ class StructureTeleporterValidationTest {
     // ========== TeleportStructure Validation Tests ==========
 
     @Test
-    void testTeleportStructure_IncompleteSelection() {
+    void testTeleportWithRequest_IncompleteSelection() {
         Selection selection = new Selection();
         selection.setXMin(0);
-        // Incomplete selection
 
-        TeleportResult result = StructureTeleporter.teleportStructure(
-                selection,
-                new net.minecraft.core.BlockPos(100, 100, 100),
-                null,
-                false);
+        TeleportResult result = StructureTeleporter.teleport(
+                new TeleportRequest.Builder(selection, new net.minecraft.core.BlockPos(100, 100, 100)).build());
 
         assertFalse(result.isSuccess());
         assertTrue(result.getMessage().contains("not complete"));
-    }
-
-    @Test
-    void testTeleportStructure_ShouldTeleportFalse() {
-        Selection selection = new Selection();
-        selection.setFromCorners(
-                new net.minecraft.core.BlockPos(0, 0, 0),
-                new net.minecraft.core.BlockPos(10, 10, 10));
-        // World not set, so will fail
-
-        TeleportResult result = StructureTeleporter.teleportStructure(
-                selection,
-                new net.minecraft.core.BlockPos(100, 100, 100),
-                null,
-                false // Dry run
-        );
-
-        // Should return a result indicating dry run or failure
-        assertFalse(result.isTeleported());
     }
 }
