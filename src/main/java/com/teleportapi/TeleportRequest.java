@@ -4,6 +4,8 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.Rotation;
+import net.minecraft.world.level.block.Mirror;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.ArrayList;
@@ -32,6 +34,8 @@ public class TeleportRequest {
     private final Player player;
     @Nullable
     private final Set<BlockPos> filter;
+    private final Rotation rotation;
+    private final Mirror mirror;
 
     private TeleportRequest(Builder builder) {
         this.selection = builder.selection;
@@ -47,6 +51,8 @@ public class TeleportRequest {
         this.teleportEntities = builder.teleportEntities;
         this.player = builder.player;
         this.filter = builder.filter != null ? new HashSet<>(builder.filter) : null;
+        this.rotation = builder.rotation;
+        this.mirror = builder.mirror;
     }
 
     public Selection getSelection() {
@@ -103,6 +109,14 @@ public class TeleportRequest {
         return filter;
     }
 
+    public Rotation getRotation() {
+        return rotation;
+    }
+
+    public Mirror getMirror() {
+        return mirror;
+    }
+
     public static class Builder {
         private Selection selection;
         private Level targetLevel;
@@ -117,6 +131,8 @@ public class TeleportRequest {
         private boolean teleportEntities = true;
         private Player player;
         private Set<BlockPos> filter;
+        private Rotation rotation = Rotation.NONE;
+        private Mirror mirror = Mirror.NONE;
 
         public Builder(Selection selection, BlockPos targetPos) {
             this.selection = selection;
@@ -176,6 +192,16 @@ public class TeleportRequest {
 
         public Builder filter(@Nullable Set<BlockPos> filter) {
             this.filter = filter;
+            return this;
+        }
+
+        public Builder rotation(Rotation rotation) {
+            this.rotation = rotation;
+            return this;
+        }
+
+        public Builder mirror(Mirror mirror) {
+            this.mirror = mirror;
             return this;
         }
 

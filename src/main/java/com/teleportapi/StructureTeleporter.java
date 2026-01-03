@@ -8,6 +8,9 @@ import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.BlockStateProperties;
+import net.minecraft.world.level.block.Rotation;
+import net.minecraft.world.level.block.Mirror;
+import net.minecraft.core.Vec3i;
 
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.entity.Entity;
@@ -736,6 +739,10 @@ public class StructureTeleporter {
             return TeleportResult.failure("Teleportation denied: Filter is empty.", 0, 0, new HashSet<>(), 0, 0);
         }
 
+        Rotation rotation = request.getRotation();
+        Mirror mirror = request.getMirror();
+        Vec3i sourceSize = max.subtract(min);
+
         // Metrics and tracking
         int totalBlocks = 0;
         int excludedCount = 0;
@@ -797,12 +804,14 @@ public class StructureTeleporter {
 
                     if (filter != null && !filter.contains(srcPos))
                         continue;
+
                     if (srcState.isAir() && !includeAir)
                         continue;
 
                     if (!isExcluded(srcState, excludedBlocks, checkExclusions)) {
                         BlockPos relPos = srcPos.subtract(min);
-                        BlockPos dstPos = targetPos.offset(relPos);
+                        BlockPos transformedRelPos = transformPos(relPos, rotation, mirror, sourceSize);
+                        BlockPos dstPos = targetPos.offset(transformedRelPos);
 
                         if (isOutsideHeightLimits(dstPos, targetLevel.getMinBuildHeight(),
                                 targetLevel.getMaxBuildHeight())) {
@@ -855,7 +864,12 @@ public class StructureTeleporter {
 
         Selection targetSelection = new Selection();
         targetSelection.setWorld(targetLevel);
-        targetSelection.setFromCorners(targetPos, targetPos.offset(max.subtract(min)));
+
+        BlockPos transformedSize = transformPos(new BlockPos(sourceSize), rotation, mirror, sourceSize);
+        // Ensure bounds are correct after transformation (min/max might swap)
+        BlockPos corner1 = targetPos;
+        BlockPos corner2 = targetPos.offset(transformedSize);
+        targetSelection.setFromCorners(corner1, corner2);
         CheckResult targetCheck = PermissionHelper.checkAreaPermissions(player, targetLevel, targetSelection, false);
         if (!targetCheck.isAllowed()) {
             return TeleportResult.permissionDeny("Target permission denied: " + targetCheck.getReason(),
@@ -907,6 +921,17 @@ public class StructureTeleporter {
                     excludedTypes, airBlockCount, solidBlockCount);
         }
 
+        // Apply transformations to blocks
+        if (rotation != Rotation.NONE || mirror != Mirror.NONE) {
+            List<BlockData> transformedBlocks = new ArrayList<>();
+            for (BlockData block : blocksToMove) {
+                BlockPos transformedRelPos = transformPos(block.relativePos, rotation, mirror, sourceSize);
+                BlockState transformedState = block.blockState.rotate(rotation).mirror(mirror);
+                transformedBlocks.add(new BlockData(transformedRelPos, transformedState, block.nbt));
+            }
+            blocksToMove = transformedBlocks;
+        }
+
         List<String> teleportedPlayers = new ArrayList<>();
         try {
             // Remove source blocks
@@ -943,16 +968,45 @@ public class StructureTeleporter {
 
             // Teleport entities
             for (EntityData info : entitiesToTeleport) {
-                double tx = targetPos.getX() + info.relX;
-                double ty = targetPos.getY() + info.relY;
-                double tz = targetPos.getZ() + info.relZ;
+                BlockPos transformedRelEntityPos = transformPos(
+                        new BlockPos((int) info.relX, (int) info.relY, (int) info.relZ), rotation, mirror, sourceSize);
+                // Sub-block precision
+                double dx = info.relX - (int) info.relX;
+                double dy = info.relY - (int) info.relY;
+                double dz = info.relZ - (int) info.relZ;
+
+                // Adjust for rotation (only X and Z)
+                double finalRelX = transformedRelEntityPos.getX();
+                double finalRelZ = transformedRelEntityPos.getZ();
+
+                if (rotation == Rotation.CLOCKWISE_90) {
+                    finalRelX += 1.0 - dz;
+                    finalRelZ += dx;
+                } else if (rotation == Rotation.CLOCKWISE_180) {
+                    finalRelX += 1.0 - dx;
+                    finalRelZ += 1.0 - dz;
+                } else if (rotation == Rotation.COUNTERCLOCKWISE_90) {
+                    finalRelX += dz;
+                    finalRelZ += 1.0 - dx;
+                } else {
+                    finalRelX += dx;
+                    finalRelZ += dz;
+                }
+
+                double tx = targetPos.getX() + finalRelX;
+                double ty = targetPos.getY() + info.relY; // Y is usually not affected by 2D rotation
+                double tz = targetPos.getZ() + finalRelZ;
+
+                float yRot = info.entity.getYRot();
+                yRot = mirrorRotation(mirror, yRot);
+                yRot = (yRot + rotation.ordinal() * 90) % 360;
 
                 if (targetLevel != sourceWorld && info.entity instanceof ServerPlayer sp) {
                     if (targetLevel instanceof ServerLevel sl) {
-                        sp.teleportTo(sl, tx, ty, tz, sp.getYRot(), sp.getXRot());
+                        sp.teleportTo(sl, tx, ty, tz, yRot, sp.getXRot());
                     }
                 } else {
-                    info.entity.teleportTo(tx, ty, tz);
+                    info.entity.moveTo(tx, ty, tz, yRot, info.entity.getXRot());
                     if (targetLevel != sourceWorld && targetLevel instanceof ServerLevel sl) {
                         info.entity.changeDimension(sl);
                     }
@@ -1013,6 +1067,53 @@ public class StructureTeleporter {
      */
     public static boolean isOutsideHeightLimits(BlockPos pos, int minHeight, int maxHeight) {
         return pos.getY() < minHeight || pos.getY() >= maxHeight;
+    }
+
+    /**
+     * Transform a relative position based on rotation and mirror.
+     */
+    public static BlockPos transformPos(BlockPos pos, Rotation rotation, Mirror mirror, Vec3i size) {
+        int x = pos.getX();
+        int y = pos.getY();
+        int z = pos.getZ();
+
+        // 1. Mirroring
+        switch (mirror) {
+            case LEFT_RIGHT:
+                z = size.getZ() - z;
+                break;
+            case FRONT_BACK:
+                x = size.getX() - x;
+                break;
+            default:
+                break;
+        }
+
+        // 2. Rotation (around anchor 0,0,0)
+        switch (rotation) {
+            case CLOCKWISE_90:
+                return new BlockPos(size.getZ() - z, y, x);
+            case CLOCKWISE_180:
+                return new BlockPos(size.getX() - x, y, size.getZ() - z);
+            case COUNTERCLOCKWISE_90:
+                return new BlockPos(z, y, size.getX() - x);
+            default:
+                return new BlockPos(x, y, z);
+        }
+    }
+
+    /**
+     * Mirror a rotation angle.
+     */
+    public static float mirrorRotation(Mirror mirror, float yRot) {
+        switch (mirror) {
+            case LEFT_RIGHT:
+                return (180.0F - yRot) % 360.0F;
+            case FRONT_BACK:
+                return (-yRot) % 360.0F;
+            default:
+                return yRot;
+        }
     }
 
     private static class EntityData {
