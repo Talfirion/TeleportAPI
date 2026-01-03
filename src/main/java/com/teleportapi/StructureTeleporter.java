@@ -714,7 +714,7 @@ public class StructureTeleporter {
     /**
      * Main teleportation method using the new TeleportRequest API.
      */
-    @SuppressWarnings({ "null" })
+    @SuppressWarnings({ "null", "deprecation" })
     public static TeleportResult teleport(TeleportRequest request) {
         Selection selection = request.getSelection();
         if (!selection.isComplete()) {
@@ -751,6 +751,7 @@ public class StructureTeleporter {
         int skippedByLimitCount = 0;
         int airBlockCount = 0;
         int solidBlockCount = 0;
+        int fluidBlockCount = 0;
         int destinationSolidBlocksLost = 0;
 
         Set<BlockState> excludedTypes = new HashSet<>();
@@ -790,6 +791,9 @@ public class StructureTeleporter {
                         excludedTypes.add(state);
                     } else {
                         solidBlockCount++;
+                        if (!state.getFluidState().isEmpty() && state.getFluidState().isSource()) {
+                            fluidBlockCount++;
+                        }
                     }
                 }
             }
@@ -894,6 +898,7 @@ public class StructureTeleporter {
                     .skippedByLimitCount(skippedByLimitCount)
                     .airBlockCount(airBlockCount)
                     .solidBlockCount(solidBlockCount)
+                    .fluidBlockCount(fluidBlockCount)
                     .destinationSolidBlocksLost(destinationSolidBlocksLost)
                     .replacedBlocksMap(replacedBlocksMap)
                     .skippedBlocksMap(skippedBlocksMap)
@@ -972,6 +977,7 @@ public class StructureTeleporter {
                         new BlockPos((int) info.relX, (int) info.relY, (int) info.relZ), rotation, mirror, sourceSize);
                 // Sub-block precision
                 double dx = info.relX - (int) info.relX;
+                @SuppressWarnings("unused")
                 double dy = info.relY - (int) info.relY;
                 double dz = info.relZ - (int) info.relZ;
 
