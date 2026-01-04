@@ -844,7 +844,11 @@ public class StructureTeleporter {
                             }
                         }
 
-                        if (shouldReplace(dstState, srcState, pasteMode, preservedBlocks)) {
+                        // Use effective destination state: if the destination block is from source,
+                        // treat it as air since it will be cleared during teleportation
+                        BlockState effectiveDstState = isDstBlockFromSource ? Blocks.AIR.defaultBlockState() : dstState;
+
+                        if (shouldReplace(effectiveDstState, srcState, pasteMode, preservedBlocks)) {
                             replacedCount++;
                             replacedBlocksMap.merge(dstState, 1, (a, b) -> a + b);
                             // Only count as lost if it's not a source block that will be teleported
