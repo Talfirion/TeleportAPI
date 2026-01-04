@@ -1007,9 +1007,13 @@ public class StructureTeleporter {
                 yRot = mirrorRotation(mirror, yRot);
                 yRot = (yRot + rotation.ordinal() * 90) % 360;
 
-                if (targetLevel != sourceWorld && info.entity instanceof ServerPlayer sp) {
-                    if (targetLevel instanceof ServerLevel sl) {
+                if (info.entity instanceof ServerPlayer sp) {
+                    if (targetLevel != sourceWorld && targetLevel instanceof ServerLevel sl) {
+                        // Cross-dimension teleportation
                         sp.teleportTo(sl, tx, ty, tz, yRot, sp.getXRot());
+                    } else {
+                        // Same-dimension teleportation
+                        sp.connection.teleport(tx, ty, tz, yRot, sp.getXRot());
                     }
                 } else {
                     info.entity.moveTo(tx, ty, tz, yRot, info.entity.getXRot());
