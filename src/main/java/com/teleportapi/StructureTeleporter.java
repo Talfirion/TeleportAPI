@@ -824,10 +824,31 @@ public class StructureTeleporter {
                         }
 
                         BlockState dstState = targetLevel.getBlockState(dstPos);
+
+                        // Check if destination block is actually a source block that will be teleported
+                        // If the destination position matches a source position (after considering
+                        // rotation/mirror),
+                        // we should treat it as air since it will be cleared during teleportation
+                        boolean isDstBlockFromSource = false;
+                        if (sourceWorld == targetLevel) {
+                            // Check if dstPos is within source selection and will be teleported
+                            if (dstPos.getX() >= min.getX() && dstPos.getX() <= max.getX() &&
+                                    dstPos.getY() >= min.getY() && dstPos.getY() <= max.getY() &&
+                                    dstPos.getZ() >= min.getZ() && dstPos.getZ() <= max.getZ()) {
+                                if (filter == null || filter.contains(dstPos)) {
+                                    BlockState dstSourceState = sourceWorld.getBlockState(dstPos);
+                                    if (!isExcluded(dstSourceState, excludedBlocks, checkExclusions)) {
+                                        isDstBlockFromSource = true;
+                                    }
+                                }
+                            }
+                        }
+
                         if (shouldReplace(dstState, srcState, pasteMode, preservedBlocks)) {
                             replacedCount++;
                             replacedBlocksMap.merge(dstState, 1, (a, b) -> a + b);
-                            if (!dstState.isAir())
+                            // Only count as lost if it's not a source block that will be teleported
+                            if (!dstState.isAir() && !isDstBlockFromSource)
                                 destinationSolidBlocksLost++;
                         } else {
                             skippedCount++;
