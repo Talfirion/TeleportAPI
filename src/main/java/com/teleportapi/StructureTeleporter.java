@@ -3,6 +3,8 @@ package com.teleportapi;
 import net.minecraft.core.BlockPos;
 
 import net.minecraft.nbt.CompoundTag;
+import net.minecraft.nbt.FloatTag;
+import net.minecraft.nbt.ListTag;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.entity.BlockEntity;
@@ -24,14 +26,20 @@ import net.minecraft.world.level.ChunkPos;
 
 import com.teleportapi.event.StructureTeleportEvent;
 import net.minecraftforge.common.MinecraftForge;
+import net.minecraftforge.event.TickEvent;
+import net.minecraftforge.eventbus.api.SubscribeEvent;
 import java.util.ArrayList;
 import java.util.Collection;
+
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+
 import java.util.Set;
-import java.util.stream.Collectors;
+
+import net.minecraft.world.level.GameType;
+import net.minecraft.world.entity.EntityType;
 
 public class StructureTeleporter {
 
@@ -402,12 +410,18 @@ public class StructureTeleporter {
 
     public static List<BlockData> copyStructure(Selection selection, List<BlockState> excludedBlocks,
             boolean checkExclusions, boolean includeAir) {
-        return copyStructure(selection, excludedBlocks, checkExclusions, includeAir, null);
+        return copyStructure(selection, excludedBlocks, checkExclusions, includeAir, null, null);
+    }
+
+    public static List<BlockData> copyStructure(Selection selection, List<BlockState> excludedBlocks,
+            boolean checkExclusions, boolean includeAir, Set<BlockPos> enclosedPositions) {
+        return copyStructure(selection, excludedBlocks, checkExclusions, includeAir, enclosedPositions, null);
     }
 
     @SuppressWarnings("null")
     public static List<BlockData> copyStructure(Selection selection, List<BlockState> excludedBlocks,
-            boolean checkExclusions, boolean includeAir, Set<BlockPos> enclosedPositions) {
+            boolean checkExclusions, boolean includeAir, Set<BlockPos> enclosedPositions,
+            java.util.BitSet validBlocksMask) {
 
         if (!selection.isComplete()) {
             return null;
@@ -428,6 +442,22 @@ public class StructureTeleporter {
                     // Coverage filter check
                     if (enclosedPositions != null && !enclosedPositions.contains(pos)) {
                         continue;
+                    }
+
+                    // BitSet filter check - CRITICAL for preventing unwanted blocks from being
+                    // copied
+                    if (validBlocksMask != null) {
+                        int dx = x - min.getX();
+                        int dy = y - min.getY();
+                        int dz = z - min.getZ();
+                        int width = max.getX() - min.getX() + 1;
+                        int height = max.getY() - min.getY() + 1;
+                        int index = dx + width * (dy + height * dz);
+
+                        // If bit is not set, skip this block (don't copy it)
+                        if (!validBlocksMask.get(index)) {
+                            continue;
+                        }
                     }
 
                     BlockState state = world.getBlockState(pos);
@@ -535,6 +565,77 @@ public class StructureTeleporter {
 
         TeleportAPI.LOGGER.info("Blocks copied from collection: " + blocks.size());
         return blocks;
+    }
+
+    /**
+     * Clear blocks within a selection without dropping items or causing block
+     * entity drops.
+     * Useful for cleaning up source locations during teleportation or structure
+     * removal.
+     * 
+     * @param selection The selection area to clear
+     * @param silent    If true, skip neighbor updates for performance
+     */
+    @SuppressWarnings("null")
+    public static void clearStructure(Selection selection, boolean silent) {
+        if (!selection.isComplete()) {
+            TeleportAPI.LOGGER.warn("[TeleportAPI] clearStructure: Selection not complete!");
+            return;
+        }
+
+        BlockPos min = selection.getMin();
+        BlockPos max = selection.getMax();
+        Level world = selection.getWorld();
+
+        TeleportAPI.LOGGER.info("[TeleportAPI] Clearing structure from " + min + " to " + max);
+
+        // Pass 1: Remove all Block Entities (prevents item drops from containers)
+        for (int x = min.getX(); x <= max.getX(); x++) {
+            for (int y = max.getY(); y >= min.getY(); y--) { // Top to bottom
+                for (int z = min.getZ(); z <= max.getZ(); z++) {
+                    BlockPos pos = new BlockPos(x, y, z);
+                    BlockEntity be = world.getBlockEntity(pos);
+                    if (be != null) {
+                        // Remove block entity data before breaking block
+                        world.removeBlockEntity(pos);
+                    }
+                }
+            }
+        }
+
+        // Pass 2: Set blocks to AIR (top-down to prevent physics drops)
+        for (int x = min.getX(); x <= max.getX(); x++) {
+            for (int y = max.getY(); y >= min.getY(); y--) { // Top to bottom!
+                for (int z = min.getZ(); z <= max.getZ(); z++) {
+                    BlockPos pos = new BlockPos(x, y, z);
+                    BlockState state = world.getBlockState(pos);
+
+                    if (!state.isAir()) {
+                        // Flag explanation:
+                        // 2 = UPDATE_CLIENTS (send to clients)
+                        // 16 = NO_NEIGHBOR_UPDATE (prevents redstone triggers)
+                        // 32 = NO_OBSERVER (prevents observer triggers)
+                        // 64 = UPDATE_INVISIBLE (update anyway)
+                        // This combination silently removes blocks without drops
+                        world.setBlock(pos, Blocks.AIR.defaultBlockState(), 2 | 16 | 32 | 64);
+                    }
+                }
+            }
+        }
+
+        // Pass 3: Final cleanup - update neighbors if not silent
+        if (!silent) {
+            for (int x = min.getX(); x <= max.getX(); x++) {
+                for (int y = min.getY(); y <= max.getY(); y++) {
+                    for (int z = min.getZ(); z <= max.getZ(); z++) {
+                        BlockPos pos = new BlockPos(x, y, z);
+                        world.updateNeighborsAt(pos, Blocks.AIR);
+                    }
+                }
+            }
+        }
+
+        TeleportAPI.LOGGER.info("[TeleportAPI] Structure cleared successfully");
     }
 
     // Method for pasting structure to a new location
@@ -765,6 +866,10 @@ public class StructureTeleporter {
         PasteMode pasteMode = request.getPasteMode();
         List<BlockState> preservedBlocks = request.getPreservedBlocks();
 
+        Integer blocksPerTickVal = request.getBlocksPerTick();
+        int blocksPerTick = blocksPerTickVal != null ? blocksPerTickVal : 0;
+        boolean useAsync = blocksPerTick > 0;
+
         // Pass 1: Count metrics
         for (int x = min.getX(); x <= max.getX(); x++) {
             for (int y = min.getY(); y <= max.getY(); y++) {
@@ -800,6 +905,8 @@ public class StructureTeleporter {
         }
 
         // Pass 2: Scanning target area feedback
+        // In the legacy synchronous version, we can do a simplified pre-check or just
+        // calculate potential overlaps.
         for (int x = min.getX(); x <= max.getX(); x++) {
             for (int y = min.getY(); y <= max.getY(); y++) {
                 for (int z = min.getZ(); z <= max.getZ(); z++) {
@@ -808,7 +915,6 @@ public class StructureTeleporter {
 
                     if (filter != null && !filter.contains(srcPos))
                         continue;
-
                     if (srcState.isAir() && !includeAir)
                         continue;
 
@@ -825,16 +931,12 @@ public class StructureTeleporter {
 
                         BlockState dstState = targetLevel.getBlockState(dstPos);
 
-                        // Check if destination block is actually a source block that will be teleported
-                        // If the destination position matches a source position (after considering
-                        // rotation/mirror),
-                        // we should treat it as air since it will be cleared during teleportation
                         boolean isDstBlockFromSource = false;
                         if (sourceWorld == targetLevel) {
-                            // Check if dstPos is within source selection and will be teleported
                             if (dstPos.getX() >= min.getX() && dstPos.getX() <= max.getX() &&
                                     dstPos.getY() >= min.getY() && dstPos.getY() <= max.getY() &&
                                     dstPos.getZ() >= min.getZ() && dstPos.getZ() <= max.getZ()) {
+                                // It's inside the bounding box, check filter
                                 if (filter == null || filter.contains(dstPos)) {
                                     BlockState dstSourceState = sourceWorld.getBlockState(dstPos);
                                     if (!isExcluded(dstSourceState, excludedBlocks, checkExclusions)) {
@@ -844,19 +946,12 @@ public class StructureTeleporter {
                             }
                         }
 
-                        // Use effective destination state: if the destination block is from source,
-                        // treat it as air since it will be cleared during teleportation
                         BlockState effectiveDstState = isDstBlockFromSource ? Blocks.AIR.defaultBlockState() : dstState;
 
                         if (shouldReplace(effectiveDstState, srcState, pasteMode, preservedBlocks)) {
-                            replacedCount++;
-                            replacedBlocksMap.merge(dstState, 1, (a, b) -> a + b);
-                            // Only count as lost if it's not a source block that will be teleported
+                            // Predicted replacement
                             if (!dstState.isAir() && !isDstBlockFromSource)
                                 destinationSolidBlocksLost++;
-                        } else {
-                            skippedCount++;
-                            skippedBlocksMap.merge(srcState, 1, (a, b) -> a + b);
                         }
                     }
                 }
@@ -877,10 +972,31 @@ public class StructureTeleporter {
                 continue;
 
             String entityPlayerName = isPlayer ? ((Player) entity).getName().getString() : null;
+            CompoundTag entityTag = null;
+            GameType gameType = null;
+
+            if (isPlayer) {
+                if (entity instanceof ServerPlayer sp) {
+                    gameType = sp.gameMode.getGameModeForPlayer();
+                }
+            } else {
+                entityTag = new CompoundTag();
+                if (!entity.save(entityTag)) {
+                    entityTag = entity.saveWithoutId(new CompoundTag());
+                }
+                if (!entityTag.contains("id")) {
+                    net.minecraft.resources.ResourceLocation key = net.minecraftforge.registries.ForgeRegistries.ENTITY_TYPES
+                            .getKey(entity.getType());
+                    if (key != null) {
+                        entityTag.putString("id", key.toString());
+                    }
+                }
+            }
+
             double relX = entity.getX() - min.getX();
             double relY = entity.getY() - min.getY();
             double relZ = entity.getZ() - min.getZ();
-            entitiesToTeleport.add(new EntityData(entity, relX, relY, relZ, entityPlayerName));
+            entitiesToTeleport.add(new EntityData(entity, relX, relY, relZ, entityPlayerName, entityTag, gameType));
         }
 
         // Permission Checks
@@ -893,12 +1009,9 @@ public class StructureTeleporter {
 
         Selection targetSelection = new Selection();
         targetSelection.setWorld(targetLevel);
-
         BlockPos transformedSize = transformPos(new BlockPos(sourceSize), rotation, mirror, sourceSize);
-        // Ensure bounds are correct after transformation (min/max might swap)
-        BlockPos corner1 = targetPos;
-        BlockPos corner2 = targetPos.offset(transformedSize);
-        targetSelection.setFromCorners(corner1, corner2);
+        // Approximate target bounds
+        targetSelection.setFromCorners(targetPos, targetPos.offset(transformedSize));
         CheckResult targetCheck = PermissionHelper.checkAreaPermissions(player, targetLevel, targetSelection, false);
         if (!targetCheck.isAllowed()) {
             return TeleportResult.permissionDeny("Target permission denied: " + targetCheck.getReason(),
@@ -920,16 +1033,10 @@ public class StructureTeleporter {
                     .teleported(false)
                     .replacedBlockCount(replacedCount)
                     .skippedBlockCount(skippedCount)
-                    .skippedByLimitCount(skippedByLimitCount)
                     .airBlockCount(airBlockCount)
                     .solidBlockCount(solidBlockCount)
-                    .fluidBlockCount(fluidBlockCount)
                     .destinationSolidBlocksLost(destinationSolidBlocksLost)
-                    .replacedBlocksMap(replacedBlocksMap)
-                    .skippedBlocksMap(skippedBlocksMap)
                     .teleportedEntitiesCount(entitiesToTeleport.size())
-                    .teleportedPlayerNames(entitiesToTeleport.stream().filter(e -> e.playerName != null)
-                            .map(e -> e.playerName).collect(Collectors.toList()))
                     .distance(distance)
                     .sourceDimension(sourceDim)
                     .targetDimension(targetDim)
@@ -944,123 +1051,380 @@ public class StructureTeleporter {
                     airBlockCount, solidBlockCount);
         }
 
-        // Actual Teleportation
-        List<BlockData> blocksToMove = copyStructure(selection, excludedBlocks, checkExclusions, includeAir, filter);
-        if (blocksToMove.isEmpty()) {
-            return TeleportResult.failure("No blocks to teleport after exclusions", totalBlocks, excludedCount,
-                    excludedTypes, airBlockCount, solidBlockCount);
+        // *** RESTORED LEGACY LOGIC ***
+
+        TeleportAPI.LOGGER.info("Starting Reliable Synchronous Teleport...");
+
+        // Get BitSet mask if provided - needed for copyStructure
+        java.util.BitSet validBlocksMask = request.getValidBlocksMask();
+
+        // 1. SNAPSHOT: Copy blocks to memory
+        // Pass BitSet to copyStructure to prevent unwanted blocks from being copied
+        List<BlockData> sourceSnapshot = copyStructure(selection, excludedBlocks, checkExclusions, includeAir, filter,
+                validBlocksMask);
+        if (sourceSnapshot.isEmpty()) {
+            return TeleportResult.failure("No blocks to teleport after filtering.", totalBlocks, 0, new HashSet<>(), 0,
+                    0);
         }
 
-        // Apply transformations to blocks
-        if (rotation != Rotation.NONE || mirror != Mirror.NONE) {
-            List<BlockData> transformedBlocks = new ArrayList<>();
-            for (BlockData block : blocksToMove) {
-                BlockPos transformedRelPos = transformPos(block.relativePos, rotation, mirror, sourceSize);
-                BlockState transformedState = block.blockState.rotate(rotation).mirror(mirror);
-                transformedBlocks.add(new BlockData(transformedRelPos, transformedState, block.nbt));
-            }
-            blocksToMove = transformedBlocks;
+        // Prepare Target List (Transformed) - Keep sourceSnapshot intact for Rollback!
+        List<BlockData> blocksToPaste = new ArrayList<>(sourceSnapshot.size());
+        for (BlockData srcData : sourceSnapshot) {
+            BlockPos transformedRelPos = transformPos(srcData.relativePos, rotation, mirror, sourceSize);
+            BlockState transformedState = srcData.blockState.rotate(rotation).mirror(mirror);
+            blocksToPaste.add(new BlockData(transformedRelPos, transformedState, srcData.nbt));
         }
 
         List<String> teleportedPlayers = new ArrayList<>();
+
         try {
-            // Remove source blocks
-            for (int y = max.getY(); y >= min.getY(); y--) {
-                for (int x = min.getX(); x <= max.getX(); x++) {
+            // 2. CLEAR SOURCE
+            // CRITICAL: Remove BlockEntities FIRST to prevent item drops
+            for (int x = min.getX(); x <= max.getX(); x++) {
+                for (int y = max.getY(); y >= min.getY(); y--) { // Top to bottom
                     for (int z = min.getZ(); z <= max.getZ(); z++) {
                         BlockPos pos = new BlockPos(x, y, z);
                         if (filter != null && !filter.contains(pos))
                             continue;
+
+                        // Check BitSet if provided
+                        if (validBlocksMask != null) {
+                            int dx = x - min.getX();
+                            int dy = y - min.getY();
+                            int dz = z - min.getZ();
+                            int width = max.getX() - min.getX() + 1;
+                            int height = max.getY() - min.getY() + 1;
+                            int index = dx + width * (dy + height * dz);
+
+                            // If bit is not set, skip this block
+                            if (!validBlocksMask.get(index)) {
+                                continue;
+                            }
+                        }
+
                         BlockState state = sourceWorld.getBlockState(pos);
+                        if (state.isAir() && !includeAir)
+                            continue;
                         if (!isExcluded(state, excludedBlocks, checkExclusions)) {
+                            BlockEntity be = sourceWorld.getBlockEntity(pos);
+                            if (be != null) {
+                                sourceWorld.removeBlockEntity(pos);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Now clear blocks to AIR (BlockEntities already removed)
+            for (int x = min.getX(); x <= max.getX(); x++) {
+                for (int y = max.getY(); y >= min.getY(); y--) { // Top to bottom
+                    for (int z = min.getZ(); z <= max.getZ(); z++) {
+                        BlockPos pos = new BlockPos(x, y, z);
+
+                        if (filter != null && !filter.contains(pos))
+                            continue;
+
+                        // Check BitSet if provided
+                        if (validBlocksMask != null) {
+                            int dx = x - min.getX();
+                            int dy = y - min.getY();
+                            int dz = z - min.getZ();
+                            int width = max.getX() - min.getX() + 1;
+                            int height = max.getY() - min.getY() + 1;
+                            int index = dx + width * (dy + height * dz);
+
+                            // If bit is not set, skip this block
+                            if (!validBlocksMask.get(index)) {
+                                continue;
+                            }
+                        }
+
+                        BlockState state = sourceWorld.getBlockState(pos);
+
+                        if (state.isAir() && !includeAir)
+                            continue;
+
+                        if (!isExcluded(state, excludedBlocks, checkExclusions)) {
+                            // CLEAR (BlockEntity already removed above)
                             sourceWorld.setBlock(pos, Blocks.AIR.defaultBlockState(), 2 | 16 | 32 | 64);
                         }
                     }
                 }
             }
 
-            // Neighbor updates for source
-            for (int y = max.getY(); y >= min.getY(); y--) {
-                for (int x = min.getX(); x <= max.getX(); x++) {
+            // Notify neighbors INSIDE the cleared area
+            for (int x = min.getX(); x <= max.getX(); x++) {
+                for (int y = min.getY(); y <= max.getY(); y++) {
                     for (int z = min.getZ(); z <= max.getZ(); z++) {
                         BlockPos pos = new BlockPos(x, y, z);
                         if (filter != null && !filter.contains(pos))
                             continue;
+
+                        // Check BitSet if provided
+                        if (validBlocksMask != null) {
+                            int dx = x - min.getX();
+                            int dy = y - min.getY();
+                            int dz = z - min.getZ();
+                            int width = max.getX() - min.getX() + 1;
+                            int height = max.getY() - min.getY() + 1;
+                            int index = dx + width * (dy + height * dz);
+
+                            if (!validBlocksMask.get(index)) {
+                                continue;
+                            }
+                        }
+
                         BlockState state = sourceWorld.getBlockState(pos);
-                        sourceWorld.updateNeighborsAt(pos, state.getBlock());
-                        state.updateNeighbourShapes(sourceWorld, pos, 3);
+                        if (state.isAir()) {
+                            sourceWorld.updateNeighborsAt(pos, Blocks.AIR);
+                        }
                     }
                 }
             }
 
-            // Paste target
-            pasteStructure(blocksToMove, targetPos, targetLevel, pasteMode, preservedBlocks);
+            // CRITICAL: Update neighbors OUTSIDE the source area (on the faces)
+            // This ensures blocks adjacent to the cleared area know the blocks are gone
+            // Update all 6 faces of the bounding box
 
-            // Teleport entities
-            for (EntityData info : entitiesToTeleport) {
-                BlockPos transformedRelEntityPos = transformPos(
-                        new BlockPos((int) info.relX, (int) info.relY, (int) info.relZ), rotation, mirror, sourceSize);
-                // Sub-block precision
-                double dx = info.relX - (int) info.relX;
-                @SuppressWarnings("unused")
-                double dy = info.relY - (int) info.relY;
-                double dz = info.relZ - (int) info.relZ;
+            // X-axis faces (min and max X)
+            for (int y = min.getY(); y <= max.getY(); y++) {
+                for (int z = min.getZ(); z <= max.getZ(); z++) {
+                    // Update block at min.x - 1 (west face)
+                    BlockPos westPos = new BlockPos(min.getX() - 1, y, z);
+                    if (westPos.getY() >= sourceWorld.getMinBuildHeight()
+                            && westPos.getY() < sourceWorld.getMaxBuildHeight()) {
+                        BlockState westState = sourceWorld.getBlockState(westPos);
+                        if (!westState.isAir()) {
+                            sourceWorld.neighborChanged(westPos, Blocks.AIR, new BlockPos(min.getX(), y, z));
+                            sourceWorld.updateNeighborsAt(westPos, westState.getBlock());
+                            // Force block update for dependent blocks like portals
+                            westState.updateNeighbourShapes(sourceWorld, westPos, 3);
+                            // Check if block can still survive (for torches, etc.)
+                            if (!westState.canSurvive(sourceWorld, westPos)) {
+                                sourceWorld.destroyBlock(westPos, true);
+                            }
+                        }
+                    }
 
-                // Adjust for rotation (only X and Z)
-                double finalRelX = transformedRelEntityPos.getX();
-                double finalRelZ = transformedRelEntityPos.getZ();
+                    // Update block at max.x + 1 (east face)
+                    BlockPos eastPos = new BlockPos(max.getX() + 1, y, z);
+                    if (eastPos.getY() >= sourceWorld.getMinBuildHeight()
+                            && eastPos.getY() < sourceWorld.getMaxBuildHeight()) {
+                        BlockState eastState = sourceWorld.getBlockState(eastPos);
+                        if (!eastState.isAir()) {
+                            sourceWorld.neighborChanged(eastPos, Blocks.AIR, new BlockPos(max.getX(), y, z));
+                            sourceWorld.updateNeighborsAt(eastPos, eastState.getBlock());
+                            eastState.updateNeighbourShapes(sourceWorld, eastPos, 3);
+                            if (!eastState.canSurvive(sourceWorld, eastPos)) {
+                                sourceWorld.destroyBlock(eastPos, true);
+                            }
+                        }
+                    }
+                }
+            }
 
-                if (rotation == Rotation.CLOCKWISE_90) {
-                    finalRelX += 1.0 - dz;
-                    finalRelZ += dx;
-                } else if (rotation == Rotation.CLOCKWISE_180) {
-                    finalRelX += 1.0 - dx;
-                    finalRelZ += 1.0 - dz;
-                } else if (rotation == Rotation.COUNTERCLOCKWISE_90) {
-                    finalRelX += dz;
-                    finalRelZ += 1.0 - dx;
-                } else {
-                    finalRelX += dx;
-                    finalRelZ += dz;
+            // Y-axis faces (min and max Y)
+            for (int x = min.getX(); x <= max.getX(); x++) {
+                for (int z = min.getZ(); z <= max.getZ(); z++) {
+                    // Update block at min.y - 1 (bottom face)
+                    BlockPos bottomPos = new BlockPos(x, min.getY() - 1, z);
+                    if (bottomPos.getY() >= sourceWorld.getMinBuildHeight()
+                            && bottomPos.getY() < sourceWorld.getMaxBuildHeight()) {
+                        BlockState bottomState = sourceWorld.getBlockState(bottomPos);
+                        if (!bottomState.isAir()) {
+                            sourceWorld.neighborChanged(bottomPos, Blocks.AIR, new BlockPos(x, min.getY(), z));
+                            sourceWorld.updateNeighborsAt(bottomPos, bottomState.getBlock());
+                            bottomState.updateNeighbourShapes(sourceWorld, bottomPos, 3);
+                            if (!bottomState.canSurvive(sourceWorld, bottomPos)) {
+                                sourceWorld.destroyBlock(bottomPos, true);
+                            }
+                        }
+                    }
+
+                    // Update block at max.y + 1 (top face)
+                    BlockPos topPos = new BlockPos(x, max.getY() + 1, z);
+                    if (topPos.getY() >= sourceWorld.getMinBuildHeight()
+                            && topPos.getY() < sourceWorld.getMaxBuildHeight()) {
+                        BlockState topState = sourceWorld.getBlockState(topPos);
+                        if (!topState.isAir()) {
+                            sourceWorld.neighborChanged(topPos, Blocks.AIR, new BlockPos(x, max.getY(), z));
+                            sourceWorld.updateNeighborsAt(topPos, topState.getBlock());
+                            topState.updateNeighbourShapes(sourceWorld, topPos, 3);
+                            if (!topState.canSurvive(sourceWorld, topPos)) {
+                                sourceWorld.destroyBlock(topPos, true);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Z-axis faces (min and max Z)
+            for (int x = min.getX(); x <= max.getX(); x++) {
+                for (int y = min.getY(); y <= max.getY(); y++) {
+                    // Update block at min.z - 1 (north face)
+                    BlockPos northPos = new BlockPos(x, y, min.getZ() - 1);
+                    if (northPos.getY() >= sourceWorld.getMinBuildHeight()
+                            && northPos.getY() < sourceWorld.getMaxBuildHeight()) {
+                        BlockState northState = sourceWorld.getBlockState(northPos);
+                        if (!northState.isAir()) {
+                            sourceWorld.neighborChanged(northPos, Blocks.AIR, new BlockPos(x, y, min.getZ()));
+                            sourceWorld.updateNeighborsAt(northPos, northState.getBlock());
+                            northState.updateNeighbourShapes(sourceWorld, northPos, 3);
+                            if (!northState.canSurvive(sourceWorld, northPos)) {
+                                sourceWorld.destroyBlock(northPos, true);
+                            }
+                        }
+                    }
+
+                    // Update block at max.z + 1 (south face)
+                    BlockPos southPos = new BlockPos(x, y, max.getZ() + 1);
+                    if (southPos.getY() >= sourceWorld.getMinBuildHeight()
+                            && southPos.getY() < sourceWorld.getMaxBuildHeight()) {
+                        BlockState southState = sourceWorld.getBlockState(southPos);
+                        if (!southState.isAir()) {
+                            sourceWorld.neighborChanged(southPos, Blocks.AIR, new BlockPos(x, y, max.getZ()));
+                            sourceWorld.updateNeighborsAt(southPos, southState.getBlock());
+                            southState.updateNeighbourShapes(sourceWorld, southPos, 3);
+                            if (!southState.canSurvive(sourceWorld, southPos)) {
+                                sourceWorld.destroyBlock(southPos, true);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 3. PASTE TARGET
+            if (useAsync && blocksPerTick > 0) {
+                // ASYNC MODE
+                TeleportAPI.LOGGER.info("Starting ASYNC PASTE Task (" + blocksPerTick + " blocks/tick)");
+
+                // Put players in SPECTATOR mode "Limbo"
+                for (EntityData info : entitiesToTeleport) {
+                    if (info.entity instanceof ServerPlayer sp) {
+                        sp.setGameMode(GameType.SPECTATOR);
+                        // Ideally we should also teleport them to a safe spot or keep them at source?
+                        // For now, Spectator at source is fine, they will fly.
+                    }
                 }
 
-                double tx = targetPos.getX() + finalRelX;
-                double ty = targetPos.getY() + info.relY; // Y is usually not affected by 2D rotation
-                double tz = targetPos.getZ() + finalRelZ;
+                TeleportResult.Builder resultBuilder = TeleportResult.builder()
+                        .totalBlocks(totalBlocks)
+                        .excludedBlocks(excludedCount)
+                        .excludedBlockTypes(excludedTypes)
+                        .replacedBlockCount(replacedCount)
+                        .skippedBlockCount(skippedCount)
+                        .skippedByLimitCount(skippedByLimitCount)
+                        .airBlockCount(airBlockCount)
+                        .solidBlockCount(solidBlockCount)
+                        .fluidBlockCount(fluidBlockCount)
+                        .destinationSolidBlocksLost(destinationSolidBlocksLost)
+                        .replacedBlocksMap(replacedBlocksMap)
+                        .skippedBlocksMap(skippedBlocksMap)
+                        .distance(distance)
+                        .sourceDimension(sourceDim)
+                        .targetDimension(targetDim)
+                        .sourceBlockCounts(sourceBlockCounts);
 
-                float yRot = info.entity.getYRot();
-                yRot = mirrorRotation(mirror, yRot);
-                yRot = (yRot + rotation.ordinal() * 90) % 360;
+                AsyncPasteTask pasteTask = new AsyncPasteTask(blocksToPaste, targetPos, targetLevel, pasteMode,
+                        preservedBlocks,
+                        entitiesToTeleport, player, selection, rotation, mirror, sourceSize, blocksPerTick,
+                        resultBuilder);
+                MinecraftForge.EVENT_BUS.register(pasteTask);
 
-                if (info.entity instanceof ServerPlayer sp) {
-                    if (targetLevel != sourceWorld && targetLevel instanceof ServerLevel sl) {
-                        // Cross-dimension teleportation
-                        sp.teleportTo(sl, tx, ty, tz, yRot, sp.getXRot());
+                // Return "InProgress" result or null?
+                // The prompt implies we return a result.
+                // We should return a generic "Started" result.
+                return resultBuilder
+                        .success(true)
+                        .message("Async Teleportation Started")
+                        .teleported(false) // Not yet
+                        .build();
+
+            } else {
+                // SYNC MODE (Instant)
+                pasteStructure(blocksToPaste, targetPos, targetLevel, pasteMode, preservedBlocks);
+            }
+
+            // 4. TELEPORT ENTITIES (Sync only - Async handles it in finish())
+            if (!useAsync || blocksPerTick <= 0) {
+                for (EntityData info : entitiesToTeleport) {
+                    BlockPos transformedRelEntityPos = transformPos(
+                            new BlockPos((int) info.relX, (int) info.relY, (int) info.relZ), rotation, mirror,
+                            sourceSize);
+
+                    double dx = info.relX - (int) info.relX;
+                    double dz = info.relZ - (int) info.relZ;
+
+                    double finalRelX = transformedRelEntityPos.getX();
+                    double finalRelZ = transformedRelEntityPos.getZ();
+
+                    if (rotation == Rotation.CLOCKWISE_90) {
+                        finalRelX += 1.0 - dz;
+                        finalRelZ += dx;
+                    } else if (rotation == Rotation.CLOCKWISE_180) {
+                        finalRelX += 1.0 - dx;
+                        finalRelZ += 1.0 - dz;
+                    } else if (rotation == Rotation.COUNTERCLOCKWISE_90) {
+                        finalRelX += dz;
+                        finalRelZ += 1.0 - dx;
                     } else {
-                        // Same-dimension teleportation
-                        sp.connection.teleport(tx, ty, tz, yRot, sp.getXRot());
+                        finalRelX += dx;
+                        finalRelZ += dz;
                     }
-                } else {
-                    info.entity.moveTo(tx, ty, tz, yRot, info.entity.getXRot());
-                    if (targetLevel != sourceWorld && targetLevel instanceof ServerLevel sl) {
-                        info.entity.changeDimension(sl);
+
+                    double tx = targetPos.getX() + finalRelX;
+                    double ty = targetPos.getY() + info.relY;
+                    double tz = targetPos.getZ() + finalRelZ;
+
+                    float yRot = info.entity.getYRot();
+                    yRot = mirrorRotation(mirror, yRot);
+                    yRot = (yRot + rotation.ordinal() * 90) % 360;
+
+                    if (info.entity instanceof ServerPlayer sp) {
+                        if (targetLevel != sourceWorld && targetLevel instanceof ServerLevel sl) {
+                            sp.teleportTo(sl, tx, ty, tz, yRot, sp.getXRot());
+                        } else {
+                            sp.connection.teleport(tx, ty, tz, yRot, sp.getXRot());
+                        }
+                        if (info.originalGameType != null) {
+                            sp.setGameMode(info.originalGameType);
+                        }
+                    } else if (info.entityData != null) {
+                        if (targetLevel instanceof ServerLevel sl && info.entity.isRemoved()) {
+                            info.entity.teleportTo(sl, tx, ty, tz, Set.of(), yRot, info.entity.getXRot());
+                        } else {
+                            if (targetLevel != sourceWorld && targetLevel instanceof ServerLevel sl) {
+                                info.entity.changeDimension(sl);
+                                info.entity.teleportTo(sl, tx, ty, tz, Set.of(), yRot, info.entity.getXRot());
+                            } else {
+                                info.entity.teleportTo(tx, ty, tz);
+                                info.entity.setYRot(yRot);
+                            }
+                        }
                     }
+                    if (info.playerName != null)
+                        teleportedPlayers.add(info.playerName);
                 }
-                if (info.playerName != null)
-                    teleportedPlayers.add(info.playerName);
-            }
+            } // End Sync-Only Entity Teleport
 
         } catch (Exception e) {
-            TeleportAPI.LOGGER.error("Teleportation failed! Attempting rollback. Error: " + e.getMessage(), e);
+            TeleportAPI.LOGGER.error("Teleportation FAILED! Attempting ROLLBACK...", e);
+
+            // 5. ROLLBACK LOGIC
             try {
-                pasteStructure(blocksToMove, min, sourceWorld, PasteMode.FORCE_REPLACE, null);
-                return TeleportResult.failure("Teleportation failed: " + e.getMessage() + ". Rollback successful.",
-                        totalBlocks, excludedCount, excludedTypes, airBlockCount, solidBlockCount);
-            } catch (Exception re) {
-                TeleportAPI.LOGGER.error("ROLLBACK FAILED! Error: " + re.getMessage(), re);
-                return TeleportResult.failure("CRITICAL: Teleportation and Rollback failed! Error: " + e.getMessage(),
+                // Restore source blocks from snapshot
+                // We paste sourceSnapshot back to `min` (Source Origin)
+                pasteStructure(sourceSnapshot, min, sourceWorld, PasteMode.FORCE_REPLACE, null);
+                TeleportAPI.LOGGER.info("Rollback successful.");
+            } catch (Exception ex) {
+                TeleportAPI.LOGGER.error("CRITICAL: Rollback FAILED!", ex);
+                return TeleportResult.failure(
+                        "CRITICAL: Teleportation failed AND Rollback failed! World may be in inconsistent state.",
                         totalBlocks, excludedCount, excludedTypes, airBlockCount, solidBlockCount);
             }
+
+            return TeleportResult.failure("Teleportation failed and was rolled back. Error: " + e.getMessage(),
+                    totalBlocks, excludedCount, excludedTypes, airBlockCount, solidBlockCount);
         }
 
         TeleportResult result = TeleportResult.builder()
@@ -1068,13 +1432,18 @@ public class StructureTeleporter {
                 .totalBlocks(totalBlocks)
                 .excludedBlocks(excludedCount)
                 .excludedBlockTypes(excludedTypes)
-                .message("Structure teleported successfully.")
+                .message("Teleportation complete (Synchronous)")
                 .teleported(true)
+                .replacedBlockCount(replacedCount) // Count from Pass 2 estimation? Or we should have counted during
+                                                   // Paste?
+                // `pasteStructure` doesn't return count. We can use the estimate
+                // `replacedBlocksMap` from scan for now.
                 .replacedBlockCount(replacedCount)
                 .skippedBlockCount(skippedCount)
                 .skippedByLimitCount(skippedByLimitCount)
                 .airBlockCount(airBlockCount)
                 .solidBlockCount(solidBlockCount)
+                .fluidBlockCount(fluidBlockCount)
                 .destinationSolidBlocksLost(destinationSolidBlocksLost)
                 .replacedBlocksMap(replacedBlocksMap)
                 .skippedBlocksMap(skippedBlocksMap)
@@ -1102,6 +1471,356 @@ public class StructureTeleporter {
      */
     public static boolean isOutsideHeightLimits(BlockPos pos, int minHeight, int maxHeight) {
         return pos.getY() < minHeight || pos.getY() >= maxHeight;
+    }
+
+    /**
+     * Start an asynchronous simulation.
+     */
+    public static void simulateAsync(TeleportRequest request) {
+        AsyncScanTask task = new AsyncScanTask(request,
+                request.getBlocksPerTick() != null ? request.getBlocksPerTick() : 1000);
+        MinecraftForge.EVENT_BUS.register(task);
+    }
+
+    /**
+     * Asynchronous scanning task for simulation
+     */
+    /**
+     * Asynchronous scanning task for simulation
+     */
+    public static class AsyncScanTask {
+        private final TeleportRequest request;
+        private final Selection selection;
+        private final Level sourceWorld;
+        private final Level targetLevel;
+        private final BlockPos targetPos;
+        private final Player player;
+        private final int blocksPerTick;
+
+        // State
+        private int x, y, z;
+        private int minX, minY, minZ;
+        private int maxX, maxY, maxZ;
+        private boolean pass1Complete = false;
+        private boolean pass2Complete = false;
+        private final Set<BlockPos> filter;
+
+        // Metrics
+        private int totalBlocks = 0;
+        private int excludedCount = 0;
+        private int replacedCount = 0;
+        private int skippedCount = 0;
+        private int skippedByLimitCount = 0;
+        private int airBlockCount = 0;
+        private int solidBlockCount = 0;
+        private int fluidBlockCount = 0;
+        private int destinationSolidBlocksLost = 0;
+        private Set<BlockState> excludedTypes = new HashSet<>();
+        private Map<BlockState, Integer> sourceBlockCounts = new HashMap<>();
+        private Map<BlockState, Integer> replacedBlocksMap = new HashMap<>();
+        private Map<BlockState, Integer> skippedBlocksMap = new HashMap<>();
+
+        private List<BlockState> excludedBlocks;
+        private boolean checkExclusions;
+        private boolean includeAir;
+        private PasteMode pasteMode;
+        List<BlockState> preservedBlocks;
+
+        // BitSet for optimization (1 = valid block to teleport, 0 = skip/air)
+        private final java.util.BitSet validBlocks;
+        private final int width;
+        private final int height;
+        private final int depth;
+
+        public AsyncScanTask(TeleportRequest request, int blocksPerTick) {
+            this.request = request;
+            this.selection = request.getSelection();
+            this.sourceWorld = selection.getWorld();
+            this.targetLevel = request.getTargetLevel() != null ? request.getTargetLevel() : sourceWorld;
+            this.targetPos = request.getTargetPos();
+            this.player = request.getPlayer();
+            this.blocksPerTick = blocksPerTick <= 0 ? Integer.MAX_VALUE : blocksPerTick;
+            this.filter = request.getFilter();
+
+            this.excludedBlocks = request.getExcludedBlocks();
+            this.checkExclusions = request.isCheckExclusions();
+            this.includeAir = request.isIncludeAir();
+            this.pasteMode = request.getPasteMode();
+            this.preservedBlocks = request.getPreservedBlocks();
+
+            BlockPos min = selection.getMin();
+            BlockPos max = selection.getMax();
+            this.minX = min.getX();
+            this.minY = min.getY();
+            this.minZ = min.getZ();
+            this.maxX = max.getX();
+            this.maxY = max.getY();
+            this.maxZ = max.getZ();
+
+            this.width = maxX - minX + 1;
+            this.height = maxY - minY + 1;
+            this.depth = maxZ - minZ + 1;
+            // Initialize BitSet with size equal to total volume
+            this.validBlocks = new java.util.BitSet(width * height * depth);
+
+            // Start P1
+            this.x = minX;
+            this.y = minY;
+            this.z = minZ;
+        }
+
+        @SubscribeEvent
+        public void onServerTick(TickEvent.ServerTickEvent event) {
+            if (event.phase != TickEvent.Phase.END)
+                return;
+
+            if (!pass1Complete) {
+                runPass1();
+            } else if (!pass2Complete) {
+                runPass2();
+            } else {
+                finish();
+                MinecraftForge.EVENT_BUS.unregister(this);
+            }
+        }
+
+        private int getIndex(int x, int y, int z) {
+            int dx = x - minX;
+            int dy = y - minY;
+            int dz = z - minZ;
+            // Local index calculation: dx + width * (dy + height * dz)
+            // Correction: Standard mapping is x + width * (y + height * z)?
+            // Convention: x is fastest changing, then z, then y? Or x, y, z?
+            // Let's use x + width * (y + height * z) to match typical Minecraft loops (y is
+            // height).
+            // Actually, in loops we do X (inner), Y (mid), Z (outer) in some places, or X,
+            // Y, Z.
+            // Let's stick to X + (Width * (Y + Height * Z)) to be safe and consistent.
+            // Wait, common is (x, y, z). unique index.
+            // dx [0..width-1]
+            // dy [0..height-1]
+            // dz [0..depth-1]
+            // index = dx + width * (dy + height * dz)
+            return dx + width * (dy + height * dz);
+        }
+
+        @SuppressWarnings("null")
+        private void runPass1() {
+            int actions = 0;
+            // 50x scan speed for P1 (read only)
+            int limit = (blocksPerTick == Integer.MAX_VALUE) ? Integer.MAX_VALUE : blocksPerTick * 50;
+
+            while (actions < limit) {
+                if (z > maxZ) {
+                    z = minZ;
+                    y++;
+                    if (y > maxY) {
+                        y = minY;
+                        x++;
+                        if (x > maxX) {
+                            pass1Complete = true;
+                            // Reset for Pass 2
+                            x = minX;
+                            y = minY;
+                            z = minZ;
+                            return;
+                        }
+                    }
+                }
+
+                BlockPos pos = new BlockPos(x, y, z);
+                // Save current coords for BitSet before incrementing
+                int cx = x;
+                int cy = y;
+                int cz = z;
+                z++; // advance cursor for next loop
+
+                if (filter != null && !filter.contains(pos))
+                    continue;
+
+                // Chunk load check (P1 only needs source)
+                if (sourceWorld instanceof ServerLevel sl) {
+                    ChunkPos cp = new ChunkPos(pos);
+                    if (!sl.hasChunk(cp.x, cp.z)) {
+                        // We could force load, or skip? Simulation should probably force load or it's
+                        // inaccurate.
+                        // Let's force load lightly
+                        sl.getChunkSource().addRegionTicket(TicketType.FORCED, cp, 2, cp);
+                        sl.getChunk(cp.x, cp.z);
+                    }
+                }
+
+                BlockState state = sourceWorld.getBlockState(pos);
+                if (state.isAir()) {
+                    if (includeAir) {
+                        airBlockCount++;
+                        totalBlocks++;
+                        sourceBlockCounts.merge(state, 1, (a, b) -> a + b);
+                        // Mark as valid if air is included
+                        validBlocks.set(getIndex(cx, cy, cz));
+                    }
+                    actions++;
+                    continue;
+                }
+
+                totalBlocks++;
+                sourceBlockCounts.merge(state, 1, (a, b) -> a + b);
+                if (isExcluded(state, excludedBlocks, checkExclusions)) {
+                    excludedCount++;
+                    excludedTypes.add(state);
+                    // Do NOT set bit - excluded blocks are treated as "nothing" (0)
+                } else {
+                    solidBlockCount++;
+                    if (!state.getFluidState().isEmpty() && state.getFluidState().isSource()) {
+                        fluidBlockCount++;
+                    }
+                    // Mark as valid
+                    validBlocks.set(getIndex(cx, cy, cz));
+                }
+                actions++;
+            }
+        }
+
+        @SuppressWarnings("null")
+        private void runPass2() {
+            int actions = 0;
+            // 20x scan speed for P2 (read target)
+            int limit = (blocksPerTick == Integer.MAX_VALUE) ? Integer.MAX_VALUE : blocksPerTick * 20;
+
+            Rotation rotation = request.getRotation();
+            Mirror mirror = request.getMirror();
+            Vec3i sourceSize = new BlockPos(maxX, maxY, maxZ).subtract(new BlockPos(minX, minY, minZ));
+            BlockPos min = new BlockPos(minX, minY, minZ);
+
+            while (actions < limit) {
+                if (z > maxZ) {
+                    z = minZ;
+                    y++;
+                    if (y > maxY) {
+                        y = minY;
+                        x++;
+                        if (x > maxX) {
+                            pass2Complete = true;
+                            return;
+                        }
+                    }
+                }
+
+                BlockPos srcPos = new BlockPos(x, y, z);
+                z++;
+
+                BlockState srcState = sourceWorld.getBlockState(srcPos);
+
+                if (filter != null && !filter.contains(srcPos))
+                    continue;
+
+                if (srcState.isAir() && !includeAir)
+                    continue;
+
+                if (!isExcluded(srcState, excludedBlocks, checkExclusions)) {
+                    BlockPos relPos = srcPos.subtract(min);
+                    BlockPos transformedRelPos = transformPos(relPos, rotation, mirror, sourceSize);
+                    @SuppressWarnings("null")
+                    BlockPos dstPos = targetPos.offset(transformedRelPos);
+
+                    if (targetLevel instanceof ServerLevel sl) {
+                        @SuppressWarnings("null")
+                        ChunkPos cp = new ChunkPos(dstPos);
+                        if (!sl.hasChunk(cp.x, cp.z)) {
+                            sl.getChunkSource().addRegionTicket(TicketType.FORCED, cp, 2, cp);
+                            sl.getChunk(cp.x, cp.z);
+                        }
+                    }
+
+                    if (isOutsideHeightLimits(dstPos, targetLevel.getMinBuildHeight(),
+                            targetLevel.getMaxBuildHeight())) {
+                        skippedByLimitCount++;
+                        actions++;
+                        continue;
+                    }
+
+                    @SuppressWarnings("null")
+                    BlockState dstState = targetLevel.getBlockState(dstPos);
+                    boolean isDstBlockFromSource = false;
+                    if (sourceWorld == targetLevel) {
+                        // Optimization: Simple bounds check for self-overlap
+                        if (dstPos.getX() >= minX && dstPos.getX() <= maxX &&
+                                dstPos.getY() >= minY && dstPos.getY() <= maxY &&
+                                dstPos.getZ() >= minZ && dstPos.getZ() <= maxZ) {
+                            if (filter == null || filter.contains(dstPos)) {
+                                BlockState dstSourceState = sourceWorld.getBlockState(dstPos);
+                                if (!isExcluded(dstSourceState, excludedBlocks, checkExclusions)) {
+                                    isDstBlockFromSource = true;
+                                }
+                            }
+                        }
+                    }
+
+                    BlockState effectiveDstState = isDstBlockFromSource ? Blocks.AIR.defaultBlockState() : dstState;
+
+                    if (shouldReplace(effectiveDstState, srcState, pasteMode, preservedBlocks)) {
+                        replacedCount++;
+                        replacedBlocksMap.merge(dstState, 1, (a, b) -> a + b);
+                        if (!dstState.isAir() && !isDstBlockFromSource)
+                            destinationSolidBlocksLost++;
+                    } else {
+                        skippedCount++;
+                        skippedBlocksMap.merge(srcState, 1, (a, b) -> a + b);
+                    }
+                    actions++;
+                }
+            }
+        }
+
+        private void finish() {
+            // Entities
+            BlockPos min = new BlockPos(minX, minY, minZ);
+            AABB selectionBox = new AABB(minX, minY, minZ, maxX + 1, maxY + 1, maxZ + 1);
+            List<Entity> entities = sourceWorld.getEntitiesOfClass(Entity.class, selectionBox);
+            int entityCount = 0;
+            List<String> playerNames = new ArrayList<>();
+            for (Entity entity : entities) {
+                boolean isPlayer = entity instanceof Player;
+                if (isPlayer && !request.isTeleportPlayers())
+                    continue;
+                if (!isPlayer && !request.isTeleportEntities())
+                    continue;
+                entityCount++;
+                if (isPlayer)
+                    playerNames.add(((Player) entity).getName().getString());
+            }
+
+            @SuppressWarnings("null")
+            double distance = Math.sqrt(min.distSqr(targetPos));
+
+            TeleportResult result = TeleportResult.builder()
+                    .success(true)
+                    .totalBlocks(totalBlocks)
+                    .excludedBlocks(excludedCount)
+                    .excludedBlockTypes(excludedTypes)
+                    .message("Async scan complete")
+                    .teleported(false)
+                    .replacedBlockCount(replacedCount)
+                    .skippedBlockCount(skippedCount)
+                    .skippedByLimitCount(skippedByLimitCount)
+                    .airBlockCount(airBlockCount)
+                    .solidBlockCount(solidBlockCount)
+                    .fluidBlockCount(fluidBlockCount)
+                    .destinationSolidBlocksLost(destinationSolidBlocksLost)
+                    .replacedBlocksMap(replacedBlocksMap)
+                    .skippedBlocksMap(skippedBlocksMap)
+                    .teleportedEntitiesCount(entityCount)
+                    .teleportedPlayerNames(playerNames)
+                    .distance(distance)
+                    .sourceDimension(sourceWorld.dimension().location().toString())
+                    .targetDimension(targetLevel.dimension().location().toString())
+                    .sourceBlockCounts(sourceBlockCounts)
+                    .validBlocksMask(validBlocks) // Pass the BitSet
+                    .build();
+
+            MinecraftForge.EVENT_BUS
+                    .post(new StructureTeleportEvent.Post(selection, targetLevel, targetPos, player, result));
+        }
     }
 
     /**
@@ -1157,13 +1876,687 @@ public class StructureTeleporter {
         final double relY;
         final double relZ;
         final String playerName;
+        final CompoundTag entityData; // For mobs: serialized data
+        final GameType originalGameType; // For players: original game mode
 
-        EntityData(Entity entity, double relX, double relY, double relZ, String playerName) {
+        EntityData(Entity entity, double relX, double relY, double relZ, String playerName, CompoundTag entityData,
+                GameType originalGameType) {
             this.entity = entity;
             this.relX = relX;
             this.relY = relY;
             this.relZ = relZ;
             this.playerName = playerName;
+            this.entityData = entityData;
+            this.originalGameType = originalGameType;
         }
     }
+
+    public static class AsyncPasteTask {
+        private final List<BlockData> blocksToPaste;
+        private final BlockPos targetPos;
+        private final Level targetLevel;
+        private final PasteMode mode;
+        private final List<BlockState> preservedBlocks;
+        private final List<EntityData> entitiesToTeleport;
+        private final Player player;
+        private final Selection selection;
+        private final Rotation rotation;
+        private final Mirror mirror;
+        private final Vec3i sourceSize;
+        private final int blocksPerTick;
+        // Result building
+        private final TeleportResult.Builder resultBuilder;
+
+        private int currentIndex = 0;
+        private boolean isCompleted = false;
+
+        public AsyncPasteTask(List<BlockData> blocksToPaste, BlockPos targetPos, Level targetLevel, PasteMode mode,
+                List<BlockState> preservedBlocks, List<EntityData> entitiesToTeleport, Player player,
+                Selection selection, Rotation rotation, Mirror mirror, Vec3i sourceSize, int blocksPerTick,
+                TeleportResult.Builder resultBuilder) {
+            this.blocksToPaste = blocksToPaste;
+            this.targetPos = targetPos;
+            this.targetLevel = targetLevel;
+            this.mode = mode;
+            this.preservedBlocks = preservedBlocks;
+            this.entitiesToTeleport = entitiesToTeleport;
+            this.player = player;
+            this.selection = selection;
+            this.rotation = rotation;
+            this.mirror = mirror;
+            this.sourceSize = sourceSize;
+            this.blocksPerTick = blocksPerTick;
+            this.resultBuilder = resultBuilder;
+        }
+
+        @SubscribeEvent
+        public void onServerTick(TickEvent.ServerTickEvent event) {
+            if (event.phase != TickEvent.Phase.END)
+                return;
+            if (isCompleted)
+                return;
+
+            processBatch();
+        }
+
+        @SuppressWarnings("null")
+        private void processBatch() {
+            int processed = 0;
+            int total = blocksToPaste.size();
+
+            while (processed < blocksPerTick && currentIndex < total) {
+                BlockData blockData = blocksToPaste.get(currentIndex);
+                @SuppressWarnings("null")
+                BlockPos absolutePos = targetPos.offset(blockData.relativePos);
+
+                if (isOutsideHeightLimits(absolutePos, targetLevel.getMinBuildHeight(),
+                        targetLevel.getMaxBuildHeight())) {
+                    currentIndex++;
+                    processed++;
+                    continue;
+                }
+
+                if (targetLevel instanceof ServerLevel sl) {
+                    @SuppressWarnings("null")
+                    ChunkPos cp = new ChunkPos(absolutePos);
+                    if (!sl.hasChunk(cp.x, cp.z)) {
+                        sl.getChunkSource().addRegionTicket(TicketType.FORCED, cp, 2, cp);
+                        sl.getChunk(cp.x, cp.z);
+                    }
+                }
+
+                if (shouldReplace(targetLevel.getBlockState(absolutePos), blockData.blockState, mode,
+                        preservedBlocks)) {
+                    targetLevel.setBlock(absolutePos, blockData.blockState, 16);
+
+                    if (blockData.nbt != null) {
+                        @SuppressWarnings("null")
+                        BlockEntity be = targetLevel.getBlockEntity(absolutePos);
+                        if (be != null) {
+                            CompoundTag tag = blockData.nbt.copy();
+                            tag.putInt("x", absolutePos.getX());
+                            tag.putInt("y", absolutePos.getY());
+                            tag.putInt("z", absolutePos.getZ());
+                            tag.remove("id");
+                            be.load(tag);
+                            be.setChanged();
+                        }
+                    }
+                }
+
+                currentIndex++;
+                processed++;
+            }
+
+            if (currentIndex >= total) {
+                finish();
+            }
+        }
+
+        @SuppressWarnings("null")
+        private void finish() {
+            isCompleted = true;
+            MinecraftForge.EVENT_BUS.unregister(this);
+
+            for (BlockData blockData : blocksToPaste) {
+                @SuppressWarnings("null")
+                BlockPos absolutePos = targetPos.offset(blockData.relativePos);
+                @SuppressWarnings("null")
+                BlockState state = targetLevel.getBlockState(absolutePos);
+                state.updateNeighbourShapes(targetLevel, absolutePos, 3);
+                targetLevel.sendBlockUpdated(absolutePos, Blocks.AIR.defaultBlockState(), state, 3);
+            }
+
+            List<String> teleportedPlayers = new ArrayList<>();
+            for (EntityData info : entitiesToTeleport) {
+                BlockPos transformedRelEntityPos = transformPos(
+                        new BlockPos((int) info.relX, (int) info.relY, (int) info.relZ), rotation, mirror, sourceSize);
+
+                double dx = info.relX - (int) info.relX;
+                double dz = info.relZ - (int) info.relZ;
+
+                double finalRelX = transformedRelEntityPos.getX();
+                double finalRelZ = transformedRelEntityPos.getZ();
+
+                if (rotation == Rotation.CLOCKWISE_90) {
+                    finalRelX += 1.0 - dz;
+                    finalRelZ += dx;
+                } else if (rotation == Rotation.CLOCKWISE_180) {
+                    finalRelX += 1.0 - dx;
+                    finalRelZ += 1.0 - dz;
+                } else if (rotation == Rotation.COUNTERCLOCKWISE_90) {
+                    finalRelX += dz;
+                    finalRelZ += 1.0 - dx;
+                } else {
+                    finalRelX += dx;
+                    finalRelZ += dz;
+                }
+
+                double tx = targetPos.getX() + finalRelX;
+                double ty = targetPos.getY() + info.relY;
+                double tz = targetPos.getZ() + finalRelZ;
+
+                float yRot = info.entity.getYRot();
+                yRot = mirrorRotation(mirror, yRot);
+                yRot = (yRot + rotation.ordinal() * 90) % 360;
+
+                if (info.entity instanceof ServerPlayer sp) {
+                    if (targetLevel != selection.getWorld() && targetLevel instanceof ServerLevel sl) {
+                        sp.teleportTo(sl, tx, ty, tz, yRot, sp.getXRot());
+                    } else {
+                        sp.connection.teleport(tx, ty, tz, yRot, sp.getXRot());
+                    }
+                    if (info.originalGameType != null) {
+                        sp.setGameMode(info.originalGameType);
+                    }
+                } else if (info.entityData != null) {
+                    if (targetLevel instanceof ServerLevel sl && info.entity.isRemoved()) {
+                        info.entity.teleportTo(sl, tx, ty, tz, Set.of(), yRot, info.entity.getXRot());
+                    } else {
+                        if (targetLevel != selection.getWorld() && targetLevel instanceof ServerLevel sl) {
+                            info.entity.changeDimension(sl);
+                            info.entity.teleportTo(sl, tx, ty, tz, Set.of(), yRot, info.entity.getXRot());
+                        } else {
+                            info.entity.teleportTo(tx, ty, tz);
+                            info.entity.setYRot(yRot);
+                        }
+                    }
+                }
+                if (info.playerName != null)
+                    teleportedPlayers.add(info.playerName);
+            }
+
+            TeleportResult result = resultBuilder
+                    .success(true)
+                    .message("Teleportation complete (Async)")
+                    .teleported(true)
+                    .teleportedEntitiesCount(entitiesToTeleport.size())
+                    .teleportedPlayerNames(teleportedPlayers)
+                    .build();
+
+            MinecraftForge.EVENT_BUS
+                    .post(new StructureTeleportEvent.Post(selection, targetLevel, targetPos, player, result));
+        }
+    }
+
+    public static class AsyncTeleportTask {
+        private final java.util.BitSet validBlocks; // The mask from simulation
+        private final Level targetLevel;
+        private final Level sourceWorld;
+        private final int blocksPerTick;
+        // ... other fields ...
+
+        // Iteration bounds
+        private final int minX, minY, minZ;
+        private final int maxX, maxY, maxZ;
+        private final int width, height, depth;
+
+        // Iteration state
+        private int currentX, currentY, currentZ;
+        private final int startX, startY, startZ;
+        private final int endX, endY, endZ;
+        private final int stepX, stepY, stepZ;
+        private boolean completed = false;
+
+        private final PasteMode pasteMode;
+        private final List<BlockState> preservedBlocks;
+        private final List<EntityData> entitiesToTeleport;
+        private final Rotation rotation;
+        private final Mirror mirror;
+        private final Vec3i sourceSize;
+        private final BlockPos targetPos;
+        private final TeleportResult.Builder resultBuilder;
+        private final Player player;
+        private final Selection selection;
+        private final Set<BlockPos> filter;
+        private final List<BlockState> excludedBlocks;
+        private final boolean checkExclusions;
+        private final boolean includeAir;
+
+        // Metrics for result
+        private int replacedCount = 0;
+        private int skippedCount = 0;
+        private int skippedByLimitCount = 0;
+        private int destinationSolidBlocksLost = 0;
+        private TeleportResult finalResult;
+
+        @SuppressWarnings("null")
+        public AsyncTeleportTask(BlockPos targetPos, Level targetLevel,
+                Level sourceWorld, PasteMode pasteMode, List<BlockState> preservedBlocks,
+                int blocksPerTick, List<EntityData> entities, Rotation rotation,
+                Mirror mirror, Vec3i sourceSize, TeleportResult.Builder resultBuilder,
+                Player player, Selection selection, List<BlockState> excludedBlocks,
+                boolean checkExclusions, Set<BlockPos> filter, boolean includeAir,
+                java.util.BitSet validBlocks) {
+            this.targetLevel = targetLevel;
+            this.sourceWorld = sourceWorld;
+            this.blocksPerTick = blocksPerTick;
+            this.pasteMode = pasteMode;
+            this.preservedBlocks = preservedBlocks;
+            this.entitiesToTeleport = entities;
+            this.rotation = rotation;
+            this.mirror = mirror;
+            this.sourceSize = sourceSize;
+            this.targetPos = targetPos;
+            this.resultBuilder = resultBuilder;
+            this.player = player;
+            this.selection = selection;
+            this.filter = filter;
+            this.excludedBlocks = excludedBlocks;
+            this.checkExclusions = checkExclusions;
+            this.includeAir = includeAir;
+            this.validBlocks = validBlocks; // May be null if forced directly, handle graceful fallback?
+            // Assuming non-null or treating null as "all valid" (or error) if requested.
+            // For now, let's assume it's passed. If null, we might default to all 1s or
+            // re-scan logic?
+            // Given the prompt "consume the BitSet", we treat it as the map.
+
+            BlockPos sourceMin = selection.getMin();
+            BlockPos sourceMax = selection.getMax();
+            this.minX = sourceMin.getX();
+            this.minY = sourceMin.getY();
+            this.minZ = sourceMin.getZ();
+            this.maxX = sourceMax.getX();
+            this.maxY = sourceMax.getY();
+            this.maxZ = sourceMax.getZ();
+
+            this.width = maxX - minX + 1;
+            this.height = maxY - minY + 1;
+            this.depth = maxZ - minZ + 1;
+
+            // Determine direction based on overlap/offset
+            int offsetX = targetPos.getX() - minX;
+            int offsetY = targetPos.getY() - minY;
+            int offsetZ = targetPos.getZ() - minZ;
+
+            // Check for actual overlap
+            // Source: [minX, maxX]
+            // Target: [targetPos.getX(), targetPos.getX() + width - 1]
+            boolean xOverlap = (minX <= targetPos.getX() + width - 1 && maxX >= targetPos.getX());
+            boolean yOverlap = (minY <= targetPos.getY() + height - 1 && maxY >= targetPos.getY());
+            boolean zOverlap = (minZ <= targetPos.getZ() + depth - 1 && maxZ >= targetPos.getZ());
+            boolean overlaps = xOverlap && yOverlap && zOverlap;
+
+            // If there is overlap, we MUST use directional iteration to prevent data loss.
+            // If no overlap, we enforce Bottom-Up (Physics Safe) iteration.
+
+            if (overlaps && offsetX > 0) {
+                this.stepX = -1;
+                this.startX = maxX;
+                this.endX = minX - 1; // Exclusive bound
+            } else {
+                this.stepX = 1;
+                this.startX = minX;
+                this.endX = maxX + 1;
+            }
+
+            // Y Axis - Critical for Gravity blocks/dependencies
+            // Only iterate Top-Down if we are moving Up AND we overlap.
+            if (overlaps && offsetY > 0) {
+                this.stepY = -1;
+                this.startY = maxY;
+                this.endY = minY - 1;
+            } else {
+                this.stepY = 1; // Bottom-Up (Standard)
+                this.startY = minY;
+                this.endY = maxY + 1;
+            }
+
+            if (overlaps && offsetZ > 0) {
+                this.stepZ = -1;
+                this.startZ = maxZ;
+                this.endZ = minZ - 1;
+            } else {
+                this.stepZ = 1;
+                this.startZ = minZ;
+                this.endZ = maxZ + 1;
+            }
+
+            this.currentX = startX;
+            this.currentY = startY;
+            this.currentZ = startZ;
+
+            TeleportAPI.LOGGER.info("[AsyncTeleport] BitSet Task created. Steps: " + stepX + "," + stepY + "," + stepZ);
+
+            // Force load chunks at target location
+            if (targetLevel instanceof ServerLevel serverLevel) {
+                Set<ChunkPos> targetedChunks = new HashSet<>();
+                BlockPos min = targetPos;
+                @SuppressWarnings("null")
+                BlockPos max = targetPos.offset(sourceSize);
+
+                for (int x = min.getX(); x <= max.getX(); x += 16) {
+                    for (int z = min.getZ(); z <= max.getZ(); z += 16) {
+                        targetedChunks.add(new ChunkPos(x >> 4, z >> 4));
+                    }
+                }
+                // Add edges
+                targetedChunks.add(new ChunkPos(min));
+                targetedChunks.add(new ChunkPos(max));
+
+                for (ChunkPos chunkPos : targetedChunks) {
+                    serverLevel.getChunkSource().addRegionTicket(TicketType.FORCED, chunkPos, 2, chunkPos);
+                }
+            }
+        }
+
+        public TeleportResult getResult() {
+            return finalResult;
+        }
+
+        private int getIndex(int x, int y, int z) {
+            int dx = x - minX;
+            int dy = y - minY;
+            int dz = z - minZ;
+            return dx + width * (dy + height * dz);
+        }
+
+        @SubscribeEvent
+        public void onServerTick(TickEvent.ServerTickEvent event) {
+            if (event.phase != TickEvent.Phase.END || completed)
+                return;
+
+            processBatch(blocksPerTick);
+        }
+
+        public void processBatch(int count) {
+            int actions = 0;
+
+            while (actions < count && !completed) {
+                // Process current block logic
+                processCurrentBlock();
+                actions++;
+
+                // Advance Iterator
+                currentX += stepX;
+                if (currentX == endX) {
+                    currentX = startX;
+                    currentZ += stepZ;
+                    if (currentZ == endZ) {
+                        currentZ = startZ;
+                        currentY += stepY;
+                        if (currentY == endY) {
+                            completed = true;
+                        }
+                    }
+                }
+            }
+
+            if (completed) {
+                onComplete();
+                try {
+                    MinecraftForge.EVENT_BUS.unregister(this);
+                } catch (Exception e) {
+                    // Ignore if not registered (Sync mode)
+                }
+            }
+        }
+
+        @SuppressWarnings("null")
+        private void processCurrentBlock() {
+            BlockPos srcPos = new BlockPos(currentX, currentY, currentZ);
+
+            // BITSET LOGIC: Enforce simulation state
+            // If includeAir=true, BitSet check is redundant (we teleport everything
+            // including air)
+            // Otherwise, BitSet determines what was valid during simulation
+            if (validBlocks != null && !includeAir) {
+                int idx = getIndex(currentX, currentY, currentZ);
+                boolean wasValidDuringScan = validBlocks.get(idx);
+
+                if (!wasValidDuringScan) {
+                    // Block was AIR during simulation (bit=0)
+                    // GAME DESIGN RULE: Force AIR at destination to match preview
+                    BlockPos relativePos = srcPos.subtract(new BlockPos(minX, minY, minZ));
+                    BlockPos transformedRelPos = transformPos(relativePos, rotation, mirror, sourceSize);
+                    @SuppressWarnings("null")
+                    BlockPos destPos = targetPos.offset(transformedRelPos);
+
+                    // Place AIR if allowed by paste mode
+                    @SuppressWarnings("null")
+                    BlockState existingState = targetLevel.getBlockState(destPos);
+                    if (shouldReplace(existingState, Blocks.AIR.defaultBlockState(), pasteMode, preservedBlocks)) {
+                        targetLevel.setBlock(destPos, Blocks.AIR.defaultBlockState(), 16);
+                    }
+                    return; // Done with this position
+                }
+            }
+
+            // Standard teleportation logic for valid blocks (bit=1)
+
+            // Double check filter if provided (redundant if BitSet is accurate, but good
+            // safety)
+            if (filter != null && !filter.contains(srcPos))
+                return;
+
+            BlockState state = sourceWorld.getBlockState(srcPos);
+
+            // Final check for air/exclusion even if BitSet said yes (e.g. state changed
+            // since scan?)
+            if (!includeAir && state.isAir())
+                return;
+            if (isExcluded(state, excludedBlocks, checkExclusions))
+                return;
+
+            // Logic to Move
+            // 1. Capture
+            CompoundTag nbt = null;
+            BlockEntity blockEntity = sourceWorld.getBlockEntity(srcPos);
+            if (blockEntity != null) {
+                nbt = blockEntity.saveWithFullMetadata();
+                for (String tag : DEFAULT_CLEANED_TAGS) {
+                    nbt.remove(tag);
+                }
+            }
+
+            // 2. Transform Destination
+            BlockPos relativePos = srcPos.subtract(new BlockPos(minX, minY, minZ));
+            BlockPos transformedRelPos = transformPos(relativePos, rotation, mirror, sourceSize);
+            @SuppressWarnings({ "null", "deprecation" })
+            BlockState transformedState = state.rotate(rotation).mirror(mirror);
+            @SuppressWarnings("null")
+            BlockPos destPos = targetPos.offset(transformedRelPos);
+
+            // 3. Place at Dest
+            // Chunk load check for Dest
+            if (targetLevel instanceof ServerLevel sl) {
+                // We could optimize this by caching current chunk, but simpler logic first
+                @SuppressWarnings("null")
+                ChunkPos cp = new ChunkPos(destPos);
+                if (!sl.hasChunk(cp.x, cp.z)) {
+                    sl.getChunkSource().addRegionTicket(TicketType.FORCED, cp, 2, cp);
+                    sl.getChunk(cp.x, cp.z);
+                }
+            }
+
+            // Place
+            try {
+                @SuppressWarnings("null")
+                BlockState existingState = targetLevel.getBlockState(destPos);
+                if (shouldReplace(existingState, transformedState, pasteMode, preservedBlocks)) {
+                    // Flag 16 (0x10): PREVENT_NEIGHBOR_REACTIONS/UPDATE_KNOWN_SHAPE (Optimization)
+                    // We use 16 to suppress client updates during bulk operations.
+                    // The bulk refresh at the end handles visual updates.
+                    targetLevel.setBlock(destPos, transformedState, 16);
+                    if (nbt != null) {
+                        @SuppressWarnings("null")
+                        BlockEntity be = targetLevel.getBlockEntity(destPos);
+                        if (be != null) {
+                            CompoundTag tag = nbt.copy();
+                            tag.putInt("x", destPos.getX());
+                            tag.putInt("y", destPos.getY());
+                            tag.putInt("z", destPos.getZ());
+                            tag.remove("id");
+                            try {
+                                be.load(tag);
+                                be.setChanged();
+                            } catch (Exception e) {
+                                TeleportAPI.LOGGER.error("[Async] Failed to load NBT for block at " + destPos, e);
+                            }
+                        }
+                    }
+                    replacedCount++;
+                }
+            } catch (Exception e) {
+                TeleportAPI.LOGGER.error("[Async] Error placing block at " + destPos, e);
+            }
+
+            // 4. Clear Source (if different and not explicitly copying)
+            // Teleport implies move.
+            // We should check if source == dest and we just overwrote it?
+            // With directional iteration, we are safe to clear `srcPos` even if it was a
+            // destination for another block,
+            // EXCEPT if we are moving WITHIN the same structure/area.
+            // Wait. If source == dest, we shouldn't clear 'srcPos' if it now contains the
+            // NEW block.
+            // IF (srcPos.equals(destPos)) -> We just set it. Don't clear.
+            // IF (srcPos != destPos) -> We can clear.
+            // BUT: What if `srcPos` was the destination for a *previous* block?
+            // `destPos` is where we wrote. `srcPos` is where read.
+            // If we are iterating safely, `srcPos` should NOT have been written to yet by
+            // another block if it's "behind" us?
+            // Directional iteration prevents reading *corrupted* data (data that was
+            // overwritten by a move).
+            // It doesn't necessarily prevent clearing *new* data?
+            // Actually, if we iterate "backwards", we move A -> B.
+            // If B is `srcPos` for a later iteration?
+            // Example: Move Right. A(0) -> B(1). B(1) -> C(2).
+            // Order: Loop 1 (at 1): Move B->C. Clear B.
+            // Order: Loop 2 (at 0): Move A->B. Clear A.
+            // At Loop 1 using "Clear B": We clear B. That's fine, B is moved.
+            // At Loop 2: We write to B. B is now A. We clear A.
+            // Result: A->B, B->C. Correct.
+            // So yes, we can clear `srcPos` immediately after moving, UNLESS srcPos ==
+            // destPos.
+
+            if (!srcPos.equals(destPos)) {
+                // Flag 16 (0x10): PREVENT_NEIGHBOR_REACTIONS
+                // 18 was (16 | 2) but 2 (UPDATE_CLIENTS) causes excessive lag.
+                sourceWorld.setBlock(srcPos, Blocks.AIR.defaultBlockState(), 16);
+            }
+        }
+
+        @SuppressWarnings("null")
+        private void onComplete() {
+            TeleportAPI.LOGGER.info("[AsyncTeleport] Block placement complete, teleporting entities");
+
+            // Bulk Client Refresh (Optimization for Flag 16)
+            // Bulk Client Refresh (Always execute for async teleport)
+            if (targetLevel instanceof ServerLevel serverLevel) {
+                Set<ChunkPos> affectedChunks = new HashSet<>();
+                BlockPos min = targetPos;
+                @SuppressWarnings("null")
+                BlockPos max = targetPos.offset(sourceSize);
+                for (int x = min.getX(); x <= max.getX(); x += 16) {
+                    for (int z = min.getZ(); z <= max.getZ(); z += 16) {
+                        affectedChunks.add(new ChunkPos(x >> 4, z >> 4));
+                    }
+                }
+                affectedChunks.add(new ChunkPos(min.getX() >> 4, min.getZ() >> 4));
+                affectedChunks.add(new ChunkPos(max.getX() >> 4, max.getZ() >> 4));
+
+                for (ChunkPos chunkPos : affectedChunks) {
+                    try {
+                        net.minecraft.world.level.chunk.LevelChunk chunk = serverLevel.getChunk(chunkPos.x, chunkPos.z);
+                        serverLevel.getChunkSource().chunkMap.getPlayers(chunkPos, false).forEach(player -> {
+                            player.connection.send(
+                                    new net.minecraft.network.protocol.game.ClientboundLevelChunkWithLightPacket(chunk,
+                                            serverLevel.getLightEngine(), null, null));
+                        });
+                    } catch (Exception e) {
+                        TeleportAPI.LOGGER.error("Failed to send chunk packet", e);
+                    }
+                }
+            }
+
+            List<String> teleportedPlayers = new ArrayList<>();
+            for (EntityData info : entitiesToTeleport) {
+                BlockPos transformedRelEntityPos = transformPos(
+                        new BlockPos((int) info.relX, (int) info.relY, (int) info.relZ), rotation, mirror, sourceSize);
+
+                double dx = info.relX - (int) info.relX;
+                double dz = info.relZ - (int) info.relZ;
+
+                double finalRelX = transformedRelEntityPos.getX();
+                double finalRelZ = transformedRelEntityPos.getZ();
+
+                if (rotation == Rotation.CLOCKWISE_90) {
+                    finalRelX += 1.0 - dz;
+                    finalRelZ += dx;
+                } else if (rotation == Rotation.CLOCKWISE_180) {
+                    finalRelX += 1.0 - dx;
+                    finalRelZ += 1.0 - dz;
+                } else if (rotation == Rotation.COUNTERCLOCKWISE_90) {
+                    finalRelX += dz;
+                    finalRelZ += 1.0 - dx;
+                } else {
+                    finalRelX += dx;
+                    finalRelZ += dz;
+                }
+
+                double tx = targetPos.getX() + finalRelX;
+                double ty = targetPos.getY() + info.relY;
+                double tz = targetPos.getZ() + finalRelZ;
+
+                float yRot = info.entity.getYRot();
+                yRot = mirrorRotation(mirror, yRot);
+                yRot = (yRot + rotation.ordinal() * 90) % 360;
+
+                if (info.entity instanceof ServerPlayer sp) {
+                    if (targetLevel != sourceWorld && targetLevel instanceof ServerLevel sl) {
+                        sp.teleportTo(sl, tx, ty, tz, yRot, sp.getXRot());
+                    } else {
+                        sp.connection.teleport(tx, ty, tz, yRot, sp.getXRot());
+                    }
+                    // Restore Gamemode
+                    if (info.originalGameType != null) {
+                        sp.setGameMode(info.originalGameType);
+                    }
+                } else if (info.entityData != null) {
+                    // Respawn mob from NBT
+                    if (targetLevel instanceof ServerLevel sl) {
+                        // Update position in NBT
+                        CompoundTag tag = info.entityData.copy();
+
+                        // Need to update Pos list in NBT
+                        ListTag posList = new ListTag();
+                        posList.add(FloatTag.valueOf((float) tx));
+                        posList.add(FloatTag.valueOf((float) ty));
+                        posList.add(FloatTag.valueOf((float) tz));
+                        tag.put("Pos", posList);
+                        tag.remove("UUID"); // Remove UUID to generate a new one (safe clone)
+
+                        Entity newEntity = EntityType.create(tag, sl).orElse(null);
+
+                        if (newEntity != null) {
+                            newEntity.moveTo(tx, ty, tz, yRot, info.entity.getXRot());
+                            sl.addFreshEntity(newEntity);
+                        } else {
+                            TeleportAPI.LOGGER.warn("Failed to respawn entity: " + info.entity.getName().getString());
+                        }
+                    }
+                }
+                if (info.playerName != null)
+                    teleportedPlayers.add(info.playerName);
+            }
+
+            finalResult = resultBuilder
+                    .teleportedPlayerNames(teleportedPlayers)
+                    .replacedBlockCount(replacedCount)
+                    .skippedBlockCount(skippedCount)
+                    .skippedByLimitCount(skippedByLimitCount)
+                    .destinationSolidBlocksLost(destinationSolidBlocksLost)
+                    .build();
+
+            MinecraftForge.EVENT_BUS
+                    .post(new StructureTeleportEvent.Post(selection, targetLevel, targetPos, player, finalResult));
+
+            TeleportAPI.LOGGER.info("[AsyncTeleport] Task completed successfully");
+        }
+
+        public boolean isCompleted() {
+            return completed;
+        }
+    }
+
 }

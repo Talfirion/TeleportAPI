@@ -36,6 +36,10 @@ public class TeleportRequest {
     private final Set<BlockPos> filter;
     private final Rotation rotation;
     private final Mirror mirror;
+    @Nullable
+    private final Integer blocksPerTick;
+    @Nullable
+    private final java.util.BitSet validBlocksMask;
 
     private TeleportRequest(Builder builder) {
         this.selection = builder.selection;
@@ -53,6 +57,8 @@ public class TeleportRequest {
         this.filter = builder.filter != null ? new HashSet<>(builder.filter) : null;
         this.rotation = builder.rotation;
         this.mirror = builder.mirror;
+        this.blocksPerTick = builder.blocksPerTick;
+        this.validBlocksMask = builder.validBlocksMask;
     }
 
     public Selection getSelection() {
@@ -117,6 +123,16 @@ public class TeleportRequest {
         return mirror;
     }
 
+    @Nullable
+    public Integer getBlocksPerTick() {
+        return blocksPerTick;
+    }
+
+    @Nullable
+    public java.util.BitSet getValidBlocksMask() {
+        return validBlocksMask;
+    }
+
     public static class Builder {
         private Selection selection;
         private Level targetLevel;
@@ -133,6 +149,8 @@ public class TeleportRequest {
         private Set<BlockPos> filter;
         private Rotation rotation = Rotation.NONE;
         private Mirror mirror = Mirror.NONE;
+        private Integer blocksPerTick;
+        private java.util.BitSet validBlocksMask;
 
         public Builder(Selection selection, BlockPos targetPos) {
             this.selection = selection;
@@ -202,6 +220,16 @@ public class TeleportRequest {
 
         public Builder mirror(Mirror mirror) {
             this.mirror = mirror;
+            return this;
+        }
+
+        public Builder blocksPerTick(@Nullable Integer blocksPerTick) {
+            this.blocksPerTick = blocksPerTick;
+            return this;
+        }
+
+        public Builder validBlocksMask(@Nullable java.util.BitSet validBlocksMask) {
+            this.validBlocksMask = validBlocksMask;
             return this;
         }
 

@@ -110,6 +110,8 @@ public class TeleportResult {
                 distance, sourceDimension, targetDimension, new HashMap<>(), 0);
     }
 
+    private final java.util.BitSet validBlocksMask;
+
     public TeleportResult(boolean success, int totalBlocks, int excludedBlocks,
             Set<BlockState> excludedBlockTypes, String message, boolean teleported,
             int replacedBlockCount, int skippedBlockCount, int skippedByLimitCount,
@@ -119,6 +121,22 @@ public class TeleportResult {
             boolean permissionDenied, net.minecraft.core.BlockPos failedPos, String denialReason,
             double distance, String sourceDimension, String targetDimension,
             Map<BlockState, Integer> sourceBlockCounts, int fluidBlockCount) {
+        this(success, totalBlocks, excludedBlocks, excludedBlockTypes, message, teleported,
+                replacedBlockCount, skippedBlockCount, skippedByLimitCount, airBlockCount,
+                solidBlockCount, destinationSolidBlocksLost, replacedBlocksMap, skippedBlocksMap,
+                teleportedEntitiesCount, teleportedPlayerNames, permissionDenied, failedPos, denialReason,
+                distance, sourceDimension, targetDimension, sourceBlockCounts, fluidBlockCount, null);
+    }
+
+    public TeleportResult(boolean success, int totalBlocks, int excludedBlocks,
+            Set<BlockState> excludedBlockTypes, String message, boolean teleported,
+            int replacedBlockCount, int skippedBlockCount, int skippedByLimitCount,
+            int airBlockCount, int solidBlockCount, int destinationSolidBlocksLost,
+            Map<BlockState, Integer> replacedBlocksMap, Map<BlockState, Integer> skippedBlocksMap,
+            int teleportedEntitiesCount, List<String> teleportedPlayerNames,
+            boolean permissionDenied, net.minecraft.core.BlockPos failedPos, String denialReason,
+            double distance, String sourceDimension, String targetDimension,
+            Map<BlockState, Integer> sourceBlockCounts, int fluidBlockCount, java.util.BitSet validBlocksMask) {
         this.success = success;
         this.totalBlocks = totalBlocks;
         this.excludedBlocks = excludedBlocks;
@@ -144,6 +162,7 @@ public class TeleportResult {
         this.targetDimension = targetDimension;
         this.sourceBlockCounts = sourceBlockCounts != null ? new HashMap<>(sourceBlockCounts) : new HashMap<>();
         this.fluidBlockCount = fluidBlockCount;
+        this.validBlocksMask = validBlocksMask;
     }
 
     public static Builder builder() {
@@ -175,6 +194,7 @@ public class TeleportResult {
         private String targetDimension = "";
         private Map<BlockState, Integer> sourceBlockCounts = new HashMap<>();
         private int fluidBlockCount;
+        private java.util.BitSet validBlocksMask;
 
         public Builder success(boolean success) {
             this.success = success;
@@ -296,12 +316,17 @@ public class TeleportResult {
             return this;
         }
 
+        public Builder validBlocksMask(java.util.BitSet mask) {
+            this.validBlocksMask = mask;
+            return this;
+        }
+
         public TeleportResult build() {
             return new TeleportResult(success, totalBlocks, excludedBlocks, excludedBlockTypes, message, teleported,
                     replacedBlockCount, skippedBlockCount, skippedByLimitCount, airBlockCount, solidBlockCount,
                     destinationSolidBlocksLost, replacedBlocksMap, skippedBlocksMap, teleportedEntitiesCount,
                     teleportedPlayerNames, permissionDenied, failedPos, denialReason, distance, sourceDimension,
-                    targetDimension, sourceBlockCounts, fluidBlockCount);
+                    targetDimension, sourceBlockCounts, fluidBlockCount, validBlocksMask);
         }
     }
 
@@ -310,7 +335,7 @@ public class TeleportResult {
             net.minecraft.core.BlockPos failedPos, String denialReason) {
         return new TeleportResult(false, totalBlocks, excludedCount, excludedTypes, message, false, 0, 0, 0, airCount,
                 solidCount, 0, new HashMap<>(), new HashMap<>(), 0, new ArrayList<>(),
-                true, failedPos, denialReason, 0.0, "", "", new HashMap<>(), 0);
+                true, failedPos, denialReason, 0.0, "", "", new HashMap<>(), 0, null);
     }
 
     public static TeleportResult failure(String message, int totalBlocks, int excludedCount,
@@ -318,7 +343,7 @@ public class TeleportResult {
             int airCount, int solidCount) {
         return new TeleportResult(false, totalBlocks, excludedCount, excludedTypes, message, false, 0, 0, 0, airCount,
                 solidCount, 0, new HashMap<>(), new HashMap<>(), 0, new ArrayList<>(), false, null, null, 0.0, "", "",
-                new HashMap<>(), 0);
+                new HashMap<>(), 0, null);
     }
 
     public boolean isSuccess() {
@@ -419,6 +444,10 @@ public class TeleportResult {
 
     public String getTargetDimension() {
         return targetDimension;
+    }
+
+    public java.util.BitSet getValidBlocksMask() {
+        return validBlocksMask;
     }
 
     @Override
