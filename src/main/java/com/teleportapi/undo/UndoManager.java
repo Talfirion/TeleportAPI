@@ -9,7 +9,8 @@ import java.util.*;
  */
 public class UndoManager {
     private static final UndoManager INSTANCE = new UndoManager();
-    private static final int MAX_HISTORY = 5; // Keep memory usage safe
+    private static int maxHistory = 5;
+    private static boolean requireCheats = true;
 
     private final Map<UUID, Deque<UndoContext>> history = new HashMap<>();
 
@@ -20,6 +21,22 @@ public class UndoManager {
         return INSTANCE;
     }
 
+    public static void setMaxHistory(int value) {
+        maxHistory = value;
+    }
+
+    public static int getMaxHistory() {
+        return maxHistory;
+    }
+
+    public static void setRequireCheats(boolean value) {
+        requireCheats = value;
+    }
+
+    public static boolean isRequireCheats() {
+        return requireCheats;
+    }
+
     public void push(Player player, UndoContext context) {
         if (player == null)
             return;
@@ -27,7 +44,7 @@ public class UndoManager {
 
         // Enforce limit
         Deque<UndoContext> stack = history.get(player.getUUID());
-        while (stack.size() > MAX_HISTORY) {
+        while (stack.size() > maxHistory) {
             stack.removeLast();
         }
     }
@@ -35,6 +52,12 @@ public class UndoManager {
     public boolean undo(Player player) {
         if (player == null)
             return false;
+
+        // Check for cheats/permissions if required
+        if (requireCheats && !player.hasPermissions(2)) {
+            return false;
+        }
+
         Deque<UndoContext> stack = history.get(player.getUUID());
         if (stack == null || stack.isEmpty())
             return false;
