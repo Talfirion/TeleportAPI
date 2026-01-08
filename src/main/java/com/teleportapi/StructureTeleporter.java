@@ -692,15 +692,17 @@ public class StructureTeleporter {
             BlockState existingState = world.getBlockState(absolutePos);
 
             if (shouldReplace(existingState, blockData.blockState, mode, preservedBlocks)) {
+                // Pre-emptively remove block entity to prevent item drops (e.g. chests)
+                BlockEntity be = world.getBlockEntity(absolutePos);
+                if (be != null) {
+                    world.removeBlockEntity(absolutePos);
+                }
                 // Clear to AIR (flag 2 | 16 | 32 | 64)
-                // 2 = UPDATE_CLIENTS, 16 = NO_NEIGHBOR_UPDATE, 32 = PREVENT_NEIGHBOR_REACTIONS,
-                // 64 = IS_MOVING
                 world.setBlock(absolutePos, Blocks.AIR.defaultBlockState(), 2 | 16 | 32 | 64);
             }
         }
 
         // Pass 2: Set real blocks and IMMEDIATELY load NBT
-
         for (BlockData blockData : blocks) {
             BlockPos absolutePos = targetPos.offset(blockData.relativePos);
 
@@ -709,18 +711,17 @@ public class StructureTeleporter {
             }
 
             if (shouldReplace(world.getBlockState(absolutePos), blockData.blockState, mode, preservedBlocks)) {
-                world.setBlock(absolutePos, blockData.blockState, 16);
+                // Set block with UPDATE_CLIENTS and NO_NEIGHBOR_UPDATE
+                world.setBlock(absolutePos, blockData.blockState, 18);
 
                 // Immediately load NBT if it exists
                 if (nbtMap.containsKey(absolutePos)) {
                     BlockEntity be = world.getBlockEntity(absolutePos);
                     if (be != null) {
                         CompoundTag tag = nbtMap.get(absolutePos).copy();
-                        // Restore coordinates for the new location
                         tag.putInt("x", absolutePos.getX());
                         tag.putInt("y", absolutePos.getY());
                         tag.putInt("z", absolutePos.getZ());
-                        // Ensure ID is removed to avoid conflict if the mod tries to assign a new one
                         tag.remove("id");
                         be.load(tag);
                         be.setChanged();
@@ -729,6 +730,7 @@ public class StructureTeleporter {
             }
         }
 
+        // Pass 3: Combined Updates and Client Sync
         for (BlockData blockData : blocks) {
             BlockPos absolutePos = targetPos.offset(blockData.relativePos);
 
@@ -738,44 +740,20 @@ public class StructureTeleporter {
 
             BlockState state = world.getBlockState(absolutePos);
 
-            // Update neighbors at the position (notifies neighbors of this block)
+            // 1. Neighbor and Shape Updates
             world.updateNeighborsAt(absolutePos, state.getBlock());
-
-            /**
-             * Aggressive shape update for the block itself.
-             * This ensures that blocks like fences or walls correctly connect to their new
-             * neighbors.
-             * flag 3 = 1 (UPDATE_NEIGHBORS) | 2 (UPDATE_CLIENTS)
-             */
             state.updateNeighbourShapes(world, absolutePos, 3);
 
-            /**
-             * Manual survival check for solitary blocks.
-             * This ensures that blocks like grass, torches, or redstone re-evaluate their
-             * "survival" (physics check) even if they have no neighbors to trigger an
-             * update.
-             * If the block cannot survive (e.g. grass on air), it is dropped as an item.
-             */
+            // 2. Survival Check
             if (!state.canSurvive(world, absolutePos)) {
                 world.destroyBlock(absolutePos, true);
             } else {
-                // If it survives, still notify it just in case of other state dependencies
                 world.neighborChanged(absolutePos, Blocks.AIR, absolutePos.below());
             }
-        }
 
-        for (BlockData blockData : blocks) {
-            BlockPos absolutePos = targetPos.offset(blockData.relativePos);
-
-            if (isOutsideHeightLimits(absolutePos, world.getMinBuildHeight(), world.getMaxBuildHeight())) {
-                continue;
-            }
-
-            BlockState state = world.getBlockState(absolutePos);
-            // flag 2 = UPDATE_CLIENTS to synchronize but avoid redundant updates
+            // 3. Client Synchronization
             world.sendBlockUpdated(absolutePos, Blocks.AIR.defaultBlockState(), state, 2);
         }
-
     }
 
     /**
@@ -1069,229 +1047,31 @@ public class StructureTeleporter {
 
         // Prepare Target List (Transformed) - Keep sourceSnapshot intact for Rollback!
         List<BlockData> blocksToPaste = new ArrayList<>(sourceSnapshot.size());
+        Set<BlockPos> targetPositions = new HashSet<>();
         for (BlockData srcData : sourceSnapshot) {
             BlockPos transformedRelPos = transformPos(srcData.relativePos, rotation, mirror, sourceSize);
             BlockState transformedState = srcData.blockState.rotate(rotation).mirror(mirror);
             blocksToPaste.add(new BlockData(transformedRelPos, transformedState, srcData.nbt));
+            targetPositions.add(targetPos.offset(transformedRelPos));
+        }
+
+        // UNDO SYSTEM INTEGRATION
+        // Capture the state of the target area BEFORE we do anything to it.
+        // We use copyStructure to get what's currently there.
+        if (request.getPlayer() != null) {
+            List<BlockData> targetSnapshot = copyStructure(targetLevel, targetPositions, targetPos, null, true, true);
+            com.teleportapi.undo.UndoManager.getInstance().push(request.getPlayer(),
+                    new com.teleportapi.undo.UndoContext(sourceWorld, targetLevel, min, targetPos, sourceSnapshot,
+                            targetSnapshot, entitiesToTeleport));
         }
 
         List<String> teleportedPlayers = new ArrayList<>();
 
         try {
             // 2. CLEAR SOURCE
-            // CRITICAL: Remove BlockEntities FIRST to prevent item drops
-            for (int x = min.getX(); x <= max.getX(); x++) {
-                for (int y = max.getY(); y >= min.getY(); y--) { // Top to bottom
-                    for (int z = min.getZ(); z <= max.getZ(); z++) {
-                        BlockPos pos = new BlockPos(x, y, z);
-                        if (filter != null && !filter.contains(pos))
-                            continue;
-
-                        // Check BitSet if provided
-                        if (validBlocksMask != null) {
-                            int dx = x - min.getX();
-                            int dy = y - min.getY();
-                            int dz = z - min.getZ();
-                            int width = max.getX() - min.getX() + 1;
-                            int height = max.getY() - min.getY() + 1;
-                            int index = dx + width * (dy + height * dz);
-
-                            // If bit is not set, skip this block
-                            if (!validBlocksMask.get(index)) {
-                                continue;
-                            }
-                        }
-
-                        BlockState state = sourceWorld.getBlockState(pos);
-                        if (state.isAir() && !includeAir)
-                            continue;
-                        if (!isExcluded(state, excludedBlocks, checkExclusions)) {
-                            BlockEntity be = sourceWorld.getBlockEntity(pos);
-                            if (be != null) {
-                                sourceWorld.removeBlockEntity(pos);
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Now clear blocks to AIR (BlockEntities already removed)
-            for (int x = min.getX(); x <= max.getX(); x++) {
-                for (int y = max.getY(); y >= min.getY(); y--) { // Top to bottom
-                    for (int z = min.getZ(); z <= max.getZ(); z++) {
-                        BlockPos pos = new BlockPos(x, y, z);
-
-                        if (filter != null && !filter.contains(pos))
-                            continue;
-
-                        // Check BitSet if provided
-                        if (validBlocksMask != null) {
-                            int dx = x - min.getX();
-                            int dy = y - min.getY();
-                            int dz = z - min.getZ();
-                            int width = max.getX() - min.getX() + 1;
-                            int height = max.getY() - min.getY() + 1;
-                            int index = dx + width * (dy + height * dz);
-
-                            // If bit is not set, skip this block
-                            if (!validBlocksMask.get(index)) {
-                                continue;
-                            }
-                        }
-
-                        BlockState state = sourceWorld.getBlockState(pos);
-
-                        if (state.isAir() && !includeAir)
-                            continue;
-
-                        if (!isExcluded(state, excludedBlocks, checkExclusions)) {
-                            // CLEAR (BlockEntity already removed above)
-                            sourceWorld.setBlock(pos, Blocks.AIR.defaultBlockState(), 2 | 16 | 32 | 64);
-                        }
-                    }
-                }
-            }
-
-            // Notify neighbors INSIDE the cleared area
-            for (int x = min.getX(); x <= max.getX(); x++) {
-                for (int y = min.getY(); y <= max.getY(); y++) {
-                    for (int z = min.getZ(); z <= max.getZ(); z++) {
-                        BlockPos pos = new BlockPos(x, y, z);
-                        if (filter != null && !filter.contains(pos))
-                            continue;
-
-                        // Check BitSet if provided
-                        if (validBlocksMask != null) {
-                            int dx = x - min.getX();
-                            int dy = y - min.getY();
-                            int dz = z - min.getZ();
-                            int width = max.getX() - min.getX() + 1;
-                            int height = max.getY() - min.getY() + 1;
-                            int index = dx + width * (dy + height * dz);
-
-                            if (!validBlocksMask.get(index)) {
-                                continue;
-                            }
-                        }
-
-                        BlockState state = sourceWorld.getBlockState(pos);
-                        if (state.isAir()) {
-                            sourceWorld.updateNeighborsAt(pos, Blocks.AIR);
-                        }
-                    }
-                }
-            }
-
-            // CRITICAL: Update neighbors OUTSIDE the source area (on the faces)
-            // This ensures blocks adjacent to the cleared area know the blocks are gone
-            // Update all 6 faces of the bounding box
-
-            // X-axis faces (min and max X)
-            for (int y = min.getY(); y <= max.getY(); y++) {
-                for (int z = min.getZ(); z <= max.getZ(); z++) {
-                    // Update block at min.x - 1 (west face)
-                    BlockPos westPos = new BlockPos(min.getX() - 1, y, z);
-                    if (westPos.getY() >= sourceWorld.getMinBuildHeight()
-                            && westPos.getY() < sourceWorld.getMaxBuildHeight()) {
-                        BlockState westState = sourceWorld.getBlockState(westPos);
-                        if (!westState.isAir()) {
-                            sourceWorld.neighborChanged(westPos, Blocks.AIR, new BlockPos(min.getX(), y, z));
-                            sourceWorld.updateNeighborsAt(westPos, westState.getBlock());
-                            // Force block update for dependent blocks like portals
-                            westState.updateNeighbourShapes(sourceWorld, westPos, 3);
-                            // Check if block can still survive (for torches, etc.)
-                            if (!westState.canSurvive(sourceWorld, westPos)) {
-                                sourceWorld.destroyBlock(westPos, true);
-                            }
-                        }
-                    }
-
-                    // Update block at max.x + 1 (east face)
-                    BlockPos eastPos = new BlockPos(max.getX() + 1, y, z);
-                    if (eastPos.getY() >= sourceWorld.getMinBuildHeight()
-                            && eastPos.getY() < sourceWorld.getMaxBuildHeight()) {
-                        BlockState eastState = sourceWorld.getBlockState(eastPos);
-                        if (!eastState.isAir()) {
-                            sourceWorld.neighborChanged(eastPos, Blocks.AIR, new BlockPos(max.getX(), y, z));
-                            sourceWorld.updateNeighborsAt(eastPos, eastState.getBlock());
-                            eastState.updateNeighbourShapes(sourceWorld, eastPos, 3);
-                            if (!eastState.canSurvive(sourceWorld, eastPos)) {
-                                sourceWorld.destroyBlock(eastPos, true);
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Y-axis faces (min and max Y)
-            for (int x = min.getX(); x <= max.getX(); x++) {
-                for (int z = min.getZ(); z <= max.getZ(); z++) {
-                    // Update block at min.y - 1 (bottom face)
-                    BlockPos bottomPos = new BlockPos(x, min.getY() - 1, z);
-                    if (bottomPos.getY() >= sourceWorld.getMinBuildHeight()
-                            && bottomPos.getY() < sourceWorld.getMaxBuildHeight()) {
-                        BlockState bottomState = sourceWorld.getBlockState(bottomPos);
-                        if (!bottomState.isAir()) {
-                            sourceWorld.neighborChanged(bottomPos, Blocks.AIR, new BlockPos(x, min.getY(), z));
-                            sourceWorld.updateNeighborsAt(bottomPos, bottomState.getBlock());
-                            bottomState.updateNeighbourShapes(sourceWorld, bottomPos, 3);
-                            if (!bottomState.canSurvive(sourceWorld, bottomPos)) {
-                                sourceWorld.destroyBlock(bottomPos, true);
-                            }
-                        }
-                    }
-
-                    // Update block at max.y + 1 (top face)
-                    BlockPos topPos = new BlockPos(x, max.getY() + 1, z);
-                    if (topPos.getY() >= sourceWorld.getMinBuildHeight()
-                            && topPos.getY() < sourceWorld.getMaxBuildHeight()) {
-                        BlockState topState = sourceWorld.getBlockState(topPos);
-                        if (!topState.isAir()) {
-                            sourceWorld.neighborChanged(topPos, Blocks.AIR, new BlockPos(x, max.getY(), z));
-                            sourceWorld.updateNeighborsAt(topPos, topState.getBlock());
-                            topState.updateNeighbourShapes(sourceWorld, topPos, 3);
-                            if (!topState.canSurvive(sourceWorld, topPos)) {
-                                sourceWorld.destroyBlock(topPos, true);
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Z-axis faces (min and max Z)
-            for (int x = min.getX(); x <= max.getX(); x++) {
-                for (int y = min.getY(); y <= max.getY(); y++) {
-                    // Update block at min.z - 1 (north face)
-                    BlockPos northPos = new BlockPos(x, y, min.getZ() - 1);
-                    if (northPos.getY() >= sourceWorld.getMinBuildHeight()
-                            && northPos.getY() < sourceWorld.getMaxBuildHeight()) {
-                        BlockState northState = sourceWorld.getBlockState(northPos);
-                        if (!northState.isAir()) {
-                            sourceWorld.neighborChanged(northPos, Blocks.AIR, new BlockPos(x, y, min.getZ()));
-                            sourceWorld.updateNeighborsAt(northPos, northState.getBlock());
-                            northState.updateNeighbourShapes(sourceWorld, northPos, 3);
-                            if (!northState.canSurvive(sourceWorld, northPos)) {
-                                sourceWorld.destroyBlock(northPos, true);
-                            }
-                        }
-                    }
-
-                    // Update block at max.z + 1 (south face)
-                    BlockPos southPos = new BlockPos(x, y, max.getZ() + 1);
-                    if (southPos.getY() >= sourceWorld.getMinBuildHeight()
-                            && southPos.getY() < sourceWorld.getMaxBuildHeight()) {
-                        BlockState southState = sourceWorld.getBlockState(southPos);
-                        if (!southState.isAir()) {
-                            sourceWorld.neighborChanged(southPos, Blocks.AIR, new BlockPos(x, y, max.getZ()));
-                            sourceWorld.updateNeighborsAt(southPos, southState.getBlock());
-                            southState.updateNeighbourShapes(sourceWorld, southPos, 3);
-                            if (!southState.canSurvive(sourceWorld, southPos)) {
-                                sourceWorld.destroyBlock(southPos, true);
-                            }
-                        }
-                    }
-                }
-            }
+            // Extracted to reusable API method
+            clearAreaWithMask(sourceWorld, selection, validBlocksMask, excludedBlocks, checkExclusions, includeAir,
+                    filter);
 
             // 3. PASTE TARGET
             if (useAsync && blocksPerTick > 0) {
@@ -1347,64 +1127,8 @@ public class StructureTeleporter {
 
             // 4. TELEPORT ENTITIES (Sync only - Async handles it in finish())
             if (!useAsync || blocksPerTick <= 0) {
-                for (EntityData info : entitiesToTeleport) {
-                    BlockPos transformedRelEntityPos = transformPos(
-                            new BlockPos((int) info.relX, (int) info.relY, (int) info.relZ), rotation, mirror,
-                            sourceSize);
-
-                    double dx = info.relX - (int) info.relX;
-                    double dz = info.relZ - (int) info.relZ;
-
-                    double finalRelX = transformedRelEntityPos.getX();
-                    double finalRelZ = transformedRelEntityPos.getZ();
-
-                    if (rotation == Rotation.CLOCKWISE_90) {
-                        finalRelX += 1.0 - dz;
-                        finalRelZ += dx;
-                    } else if (rotation == Rotation.CLOCKWISE_180) {
-                        finalRelX += 1.0 - dx;
-                        finalRelZ += 1.0 - dz;
-                    } else if (rotation == Rotation.COUNTERCLOCKWISE_90) {
-                        finalRelX += dz;
-                        finalRelZ += 1.0 - dx;
-                    } else {
-                        finalRelX += dx;
-                        finalRelZ += dz;
-                    }
-
-                    double tx = targetPos.getX() + finalRelX;
-                    double ty = targetPos.getY() + info.relY;
-                    double tz = targetPos.getZ() + finalRelZ;
-
-                    float yRot = info.entity.getYRot();
-                    yRot = mirrorRotation(mirror, yRot);
-                    yRot = (yRot + rotation.ordinal() * 90) % 360;
-
-                    if (info.entity instanceof ServerPlayer sp) {
-                        if (targetLevel != sourceWorld && targetLevel instanceof ServerLevel sl) {
-                            sp.teleportTo(sl, tx, ty, tz, yRot, sp.getXRot());
-                        } else {
-                            sp.connection.teleport(tx, ty, tz, yRot, sp.getXRot());
-                        }
-                        if (info.originalGameType != null) {
-                            sp.setGameMode(info.originalGameType);
-                        }
-                    } else if (info.entityData != null) {
-                        if (targetLevel instanceof ServerLevel sl && info.entity.isRemoved()) {
-                            info.entity.teleportTo(sl, tx, ty, tz, Set.of(), yRot, info.entity.getXRot());
-                        } else {
-                            if (targetLevel != sourceWorld && targetLevel instanceof ServerLevel sl) {
-                                info.entity.changeDimension(sl);
-                                info.entity.teleportTo(sl, tx, ty, tz, Set.of(), yRot, info.entity.getXRot());
-                            } else {
-                                info.entity.teleportTo(tx, ty, tz);
-                                info.entity.setYRot(yRot);
-                            }
-                        }
-                    }
-                    if (info.playerName != null)
-                        teleportedPlayers.add(info.playerName);
-                }
+                teleportEntities(entitiesToTeleport, targetLevel, targetPos, rotation, mirror, sourceSize, sourceWorld,
+                        teleportedPlayers);
             } // End Sync-Only Entity Teleport
 
         } catch (Exception e) {
@@ -1870,16 +1594,17 @@ public class StructureTeleporter {
         }
     }
 
-    private static class EntityData {
-        final Entity entity;
-        final double relX;
-        final double relY;
-        final double relZ;
-        final String playerName;
-        final CompoundTag entityData; // For mobs: serialized data
-        final GameType originalGameType; // For players: original game mode
+    public static class EntityData {
+        public final Entity entity;
+        public final double relX;
+        public final double relY;
+        public final double relZ;
+        public final String playerName;
+        public final CompoundTag entityData; // For mobs: serialized data
+        public final GameType originalGameType; // For players: original game mode
 
-        EntityData(Entity entity, double relX, double relY, double relZ, String playerName, CompoundTag entityData,
+        public EntityData(Entity entity, double relX, double relY, double relZ, String playerName,
+                CompoundTag entityData,
                 GameType originalGameType) {
             this.entity = entity;
             this.relX = relX;
@@ -2559,4 +2284,188 @@ public class StructureTeleporter {
         }
     }
 
+    // ========================================================================================================
+    // REFACTORED API METHODS
+    // ========================================================================================================
+
+    /**
+     * Clears a structure area with advanced masking and filtering options.
+     * Prevents item drops by removing BlockEntities before blocks.
+     */
+    @SuppressWarnings("null")
+    public static void clearAreaWithMask(Level world, Selection selection, java.util.BitSet validBlocksMask,
+            List<BlockState> excludedBlocks, boolean checkExclusions, boolean includeAir, Set<BlockPos> filter) {
+
+        BlockPos min = selection.getMin();
+        BlockPos max = selection.getMax();
+
+        int width = max.getX() - min.getX() + 1;
+        int height = max.getY() - min.getY() + 1;
+
+        // Combined Pass: Remove Block Entities and Set blocks to AIR (top-down)
+        for (int y = max.getY(); y >= min.getY(); y--) { // Top to bottom!
+            for (int x = min.getX(); x <= max.getX(); x++) {
+                for (int z = min.getZ(); z <= max.getZ(); z++) {
+                    BlockPos pos = new BlockPos(x, y, z);
+                    if (filter != null && !filter.contains(pos))
+                        continue;
+
+                    if (validBlocksMask != null) {
+                        int index = (x - min.getX()) + width * ((y - min.getY()) + height * (z - min.getZ()));
+                        if (!validBlocksMask.get(index)) {
+                            continue;
+                        }
+                    }
+
+                    BlockState state = world.getBlockState(pos);
+                    if (state.isAir() && !includeAir)
+                        continue;
+
+                    if (!isExcluded(state, excludedBlocks, checkExclusions)) {
+                        BlockEntity be = world.getBlockEntity(pos);
+                        if (be != null) {
+                            world.removeBlockEntity(pos);
+                        }
+                        // 2 = UPDATE_CLIENTS, 16 = NO_NEIGHBOR_UPDATE, 32 = NO_OBSERVER, 64 =
+                        // UPDATE_INVISIBLE
+                        world.setBlock(pos, Blocks.AIR.defaultBlockState(), 2 | 16 | 32 | 64);
+                    }
+                }
+            }
+        }
+
+        // Notify neighbors OUTSIDE the source area (on the faces)
+        notifyBoundingBoxNeighbors(world, min, max);
+    }
+
+    public static void notifyBoundingBoxNeighbors(Level world, BlockPos min, BlockPos max) {
+        // X-axis faces (min and max X)
+        for (int y = min.getY(); y <= max.getY(); y++) {
+            for (int z = min.getZ(); z <= max.getZ(); z++) {
+                checkAndNotifyNeighbor(world, new BlockPos(min.getX() - 1, y, z), new BlockPos(min.getX(), y, z));
+                checkAndNotifyNeighbor(world, new BlockPos(max.getX() + 1, y, z), new BlockPos(max.getX(), y, z));
+            }
+        }
+
+        // Y-axis faces (min and max Y)
+        for (int x = min.getX(); x <= max.getX(); x++) {
+            for (int z = min.getZ(); z <= max.getZ(); z++) {
+                checkAndNotifyNeighbor(world, new BlockPos(x, min.getY() - 1, z), new BlockPos(x, min.getY(), z));
+                checkAndNotifyNeighbor(world, new BlockPos(x, max.getY() + 1, z), new BlockPos(x, max.getY(), z));
+            }
+        }
+
+        // Z-axis faces (min and max Z)
+        for (int x = min.getX(); x <= max.getX(); x++) {
+            for (int y = min.getY(); y <= max.getY(); y++) {
+                checkAndNotifyNeighbor(world, new BlockPos(x, y, min.getZ() - 1), new BlockPos(x, y, min.getZ()));
+                checkAndNotifyNeighbor(world, new BlockPos(x, y, max.getZ() + 1), new BlockPos(x, y, max.getZ()));
+            }
+        }
+    }
+
+    @SuppressWarnings("null")
+    private static void checkAndNotifyNeighbor(Level world, BlockPos neighborPos, BlockPos sourcePos) {
+        if (neighborPos.getY() >= world.getMinBuildHeight() && neighborPos.getY() < world.getMaxBuildHeight()) {
+            BlockState neighborState = world.getBlockState(neighborPos);
+            if (!neighborState.isAir()) {
+                world.neighborChanged(neighborPos, Blocks.AIR, sourcePos);
+                world.updateNeighborsAt(neighborPos, neighborState.getBlock());
+                // Force block update for dependent blocks like portals
+                neighborState.updateNeighbourShapes(world, neighborPos, 3);
+                // Check if block can still survive (for torches, etc.)
+                if (!neighborState.canSurvive(world, neighborPos)) {
+                    world.destroyBlock(neighborPos, true);
+                }
+            }
+        }
+    }
+
+    @SuppressWarnings("null")
+    public static void teleportEntities(List<EntityData> entitiesToTeleport, Level targetLevel, BlockPos targetPos,
+            Rotation rotation, Mirror mirror, Vec3i sourceSize, Level sourceWorld, List<String> teleportedPlayers) {
+
+        for (EntityData info : entitiesToTeleport) {
+            BlockPos transformedRelEntityPos = transformPos(
+                    new BlockPos((int) info.relX, (int) info.relY, (int) info.relZ), rotation, mirror,
+                    sourceSize);
+
+            double dx = info.relX - (int) info.relX;
+            double dz = info.relZ - (int) info.relZ;
+
+            double finalRelX = transformedRelEntityPos.getX();
+            double finalRelZ = transformedRelEntityPos.getZ();
+
+            if (rotation == Rotation.CLOCKWISE_90) {
+                finalRelX += 1.0 - dz;
+                finalRelZ += dx;
+            } else if (rotation == Rotation.CLOCKWISE_180) {
+                finalRelX += 1.0 - dx;
+                finalRelZ += 1.0 - dz;
+            } else if (rotation == Rotation.COUNTERCLOCKWISE_90) {
+                finalRelX += dz;
+                finalRelZ += 1.0 - dx;
+            } else {
+                finalRelX += dx;
+                finalRelZ += dz;
+            }
+
+            double tx = targetPos.getX() + finalRelX;
+            double ty = targetPos.getY() + info.relY;
+            double tz = targetPos.getZ() + finalRelZ;
+
+            float yRot = info.entity.getYRot();
+            yRot = mirrorRotation(mirror, yRot);
+            yRot = (yRot + rotation.ordinal() * 90) % 360;
+
+            if (info.entity instanceof ServerPlayer sp) {
+                if (targetLevel != sourceWorld && targetLevel instanceof ServerLevel sl) {
+                    sp.teleportTo(sl, tx, ty, tz, yRot, sp.getXRot());
+                } else {
+                    sp.connection.teleport(tx, ty, tz, yRot, sp.getXRot());
+                }
+                if (info.originalGameType != null) {
+                    sp.setGameMode(info.originalGameType);
+                }
+            } else {
+                if (targetLevel instanceof ServerLevel sl) {
+                    Entity newEntity = info.entity;
+                    boolean isCrossDimension = targetLevel != sourceWorld;
+
+                    if (isCrossDimension) {
+                        newEntity = info.entity.getType().create(targetLevel);
+                        if (newEntity != null) {
+                            newEntity.restoreFrom(info.entity);
+                            info.entity.discard();
+                        }
+                    }
+
+                    if (newEntity != null) {
+                        newEntity.moveTo(tx, ty, tz, yRot, newEntity.getXRot());
+
+                        if (isCrossDimension) {
+                            if (info.entityData != null) {
+                                CompoundTag cleanTag = info.entityData.copy();
+                                cleanTag.remove("UUID");
+                                newEntity.load(cleanTag);
+                                newEntity.setPos(tx, ty, tz);
+                            }
+                            sl.addFreshEntity(newEntity);
+                        } else {
+                            if (info.entityData != null) {
+                                CompoundTag cleanTag = info.entityData.copy();
+                                cleanTag.remove("UUID");
+                                newEntity.load(cleanTag);
+                                newEntity.setPos(tx, ty, tz);
+                            }
+                            newEntity.setYRot(yRot);
+                        }
+                    }
+                }
+            }
+            if (info.playerName != null && teleportedPlayers != null) {
+                teleportedPlayers.add(info.playerName);
+            }
+        }
+    }
 }
