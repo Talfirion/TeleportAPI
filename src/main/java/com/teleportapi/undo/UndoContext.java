@@ -37,12 +37,14 @@ public class UndoContext {
     public void restore() {
         // 1. Restore Target Area:
         if (targetSnapshot != null && !targetSnapshot.isEmpty()) {
-            StructureTeleporter.pasteStructure(targetSnapshot, targetOrigin, targetLevel);
+            StructureTeleporter.pasteStructure(targetSnapshot, targetOrigin, targetLevel,
+                    com.teleportapi.PasteMode.FORCE_REPLACE, null);
         }
 
         // 2. Restore Source Area:
         if (sourceSnapshot != null && !sourceSnapshot.isEmpty()) {
-            StructureTeleporter.pasteStructure(sourceSnapshot, sourceOrigin, sourceLevel);
+            StructureTeleporter.pasteStructure(sourceSnapshot, sourceOrigin, sourceLevel,
+                    com.teleportapi.PasteMode.FORCE_REPLACE, null);
         }
 
         // 3. Teleport Entities back to Source:

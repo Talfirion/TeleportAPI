@@ -40,6 +40,12 @@ public class TeleportRequest {
     private final Integer blocksPerTick;
     @Nullable
     private final java.util.BitSet validBlocksMask;
+    @Nullable
+    private final java.util.BitSet hullMask;
+    /** WIP: Not implemented yet. Defaults to NONE. WARNING: HIGHLY UNSTABLE. */
+    private final VisualizationType visualizationType;
+    /** WIP: Not implemented yet. Defaults to "Y". WARNING: HIGHLY UNSTABLE. */
+    private final String visualizationAxis;
 
     private TeleportRequest(Builder builder) {
         this.selection = builder.selection;
@@ -59,6 +65,9 @@ public class TeleportRequest {
         this.mirror = builder.mirror;
         this.blocksPerTick = builder.blocksPerTick;
         this.validBlocksMask = builder.validBlocksMask;
+        this.hullMask = builder.hullMask;
+        this.visualizationType = builder.visualizationType;
+        this.visualizationAxis = builder.visualizationAxis;
     }
 
     public Selection getSelection() {
@@ -133,6 +142,19 @@ public class TeleportRequest {
         return validBlocksMask;
     }
 
+    @Nullable
+    public java.util.BitSet getHullMask() {
+        return hullMask;
+    }
+
+    public VisualizationType getVisualizationType() {
+        return visualizationType;
+    }
+
+    public String getVisualizationAxis() {
+        return visualizationAxis;
+    }
+
     public static class Builder {
         private Selection selection;
         private Level targetLevel;
@@ -151,6 +173,11 @@ public class TeleportRequest {
         private Mirror mirror = Mirror.NONE;
         private Integer blocksPerTick;
         private java.util.BitSet validBlocksMask;
+        private java.util.BitSet hullMask;
+        /** WIP: Not implemented yet. WARNING: HIGHLY UNSTABLE. */
+        private VisualizationType visualizationType = VisualizationType.NONE;
+        /** WIP: Not implemented yet. WARNING: HIGHLY UNSTABLE. */
+        private String visualizationAxis = "Y";
 
         public Builder(Selection selection, BlockPos targetPos) {
             this.selection = selection;
@@ -230,6 +257,23 @@ public class TeleportRequest {
 
         public Builder validBlocksMask(@Nullable java.util.BitSet validBlocksMask) {
             this.validBlocksMask = validBlocksMask;
+            return this;
+        }
+
+        public Builder hullMask(@Nullable java.util.BitSet hullMask) {
+            this.hullMask = hullMask;
+            return this;
+        }
+
+        /** WIP: Not implemented yet. WARNING: HIGHLY UNSTABLE. */
+        public Builder visualizationType(VisualizationType visualizationType) {
+            this.visualizationType = visualizationType;
+            return this;
+        }
+
+        /** WIP: Not implemented yet. WARNING: HIGHLY UNSTABLE. */
+        public Builder visualizationAxis(String visualizationAxis) {
+            this.visualizationAxis = visualizationAxis;
             return this;
         }
 

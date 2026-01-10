@@ -40,6 +40,11 @@ import java.util.Set;
 
 import net.minecraft.world.level.GameType;
 import net.minecraft.world.entity.EntityType;
+import net.minecraft.core.particles.ParticleTypes;
+import net.minecraft.sounds.SoundEvents;
+import net.minecraft.sounds.SoundSource;
+import java.util.Comparator;
+import java.util.Random;
 
 public class StructureTeleporter {
 
@@ -1108,7 +1113,8 @@ public class StructureTeleporter {
                 AsyncPasteTask pasteTask = new AsyncPasteTask(blocksToPaste, targetPos, targetLevel, pasteMode,
                         preservedBlocks,
                         entitiesToTeleport, player, selection, rotation, mirror, sourceSize, blocksPerTick,
-                        resultBuilder);
+                        resultBuilder, request.getVisualizationType(), request.getVisualizationAxis(),
+                        request.getHullMask());
                 MinecraftForge.EVENT_BUS.register(pasteTask);
 
                 // Return "InProgress" result or null?
@@ -1226,6 +1232,7 @@ public class StructureTeleporter {
         private int minX, minY, minZ;
         private int maxX, maxY, maxZ;
         private boolean pass1Complete = false;
+        private boolean hullPassComplete = false;
         private boolean pass2Complete = false;
         private final Set<BlockPos> filter;
 
@@ -1252,6 +1259,7 @@ public class StructureTeleporter {
 
         // BitSet for optimization (1 = valid block to teleport, 0 = skip/air)
         private final java.util.BitSet validBlocks;
+        private final java.util.BitSet hullBlocks;
         private final int width;
         private final int height;
         private final int depth;
@@ -1286,6 +1294,7 @@ public class StructureTeleporter {
             this.depth = maxZ - minZ + 1;
             // Initialize BitSet with size equal to total volume
             this.validBlocks = new java.util.BitSet(width * height * depth);
+            this.hullBlocks = new java.util.BitSet(width * height * depth);
 
             // Start P1
             this.x = minX;
@@ -1300,6 +1309,8 @@ public class StructureTeleporter {
 
             if (!pass1Complete) {
                 runPass1();
+            } else if (!hullPassComplete) {
+                runHullPass();
             } else if (!pass2Complete) {
                 runPass2();
             } else {
@@ -1343,7 +1354,7 @@ public class StructureTeleporter {
                         x++;
                         if (x > maxX) {
                             pass1Complete = true;
-                            // Reset for Pass 2
+                            // Reset for Hull Pass
                             x = minX;
                             y = minY;
                             z = minZ;
@@ -1403,6 +1414,66 @@ public class StructureTeleporter {
                 }
                 actions++;
             }
+        }
+
+        @SuppressWarnings("null")
+        private void runHullPass() {
+            int actions = 0;
+            int limit = (blocksPerTick == Integer.MAX_VALUE) ? Integer.MAX_VALUE : blocksPerTick * 100;
+
+            while (actions < limit) {
+                if (z > maxZ) {
+                    z = minZ;
+                    y++;
+                    if (y > maxY) {
+                        y = minY;
+                        x++;
+                        if (x > maxX) {
+                            hullPassComplete = true;
+                            // Reset for Pass 2
+                            x = minX;
+                            y = minY;
+                            z = minZ;
+                            return;
+                        }
+                    }
+                }
+
+                int dx = x - minX;
+                int dy = y - minY;
+                int dz = z - minZ;
+                int index = getIndex(dx, dy, dz);
+                z++;
+
+                if (validBlocks.get(index)) {
+                    if (isHull(dx, dy, dz)) {
+                        hullBlocks.set(index);
+                    }
+                }
+                actions++;
+            }
+        }
+
+        private boolean isHull(int dx, int dy, int dz) {
+            // Boundary of selection
+            if (dx == 0 || dx == width - 1 || dy == 0 || dy == height - 1 || dz == 0 || dz == depth - 1)
+                return true;
+
+            // Check 6 neighbors
+            int[][] neighbors = { { -1, 0, 0 }, { 1, 0, 0 }, { 0, -1, 0 }, { 0, 1, 0 }, { 0, 0, -1 }, { 0, 0, 1 } };
+            for (int[] n : neighbors) {
+                int nx = dx + n[0];
+                int ny = dy + n[1];
+                int nz = dz + n[2];
+
+                // If neighbor is within bounds, check if it's NOT a valid block (air/excluded)
+                if (nx >= 0 && nx < width && ny >= 0 && ny < height && nz >= 0 && nz < depth) {
+                    if (!validBlocks.get(getIndex(nx, ny, nz))) {
+                        return true;
+                    }
+                }
+            }
+            return false;
         }
 
         @SuppressWarnings("null")
@@ -1540,6 +1611,7 @@ public class StructureTeleporter {
                     .targetDimension(targetLevel.dimension().location().toString())
                     .sourceBlockCounts(sourceBlockCounts)
                     .validBlocksMask(validBlocks) // Pass the BitSet
+                    .hullMask(hullBlocks)
                     .build();
 
             MinecraftForge.EVENT_BUS
@@ -1596,6 +1668,7 @@ public class StructureTeleporter {
 
     public static class EntityData {
         public final Entity entity;
+        public final java.util.UUID entityUuid;
         public final double relX;
         public final double relY;
         public final double relZ;
@@ -1607,6 +1680,7 @@ public class StructureTeleporter {
                 CompoundTag entityData,
                 GameType originalGameType) {
             this.entity = entity;
+            this.entityUuid = entity != null ? entity.getUUID() : null;
             this.relX = relX;
             this.relY = relY;
             this.relZ = relZ;
@@ -1631,14 +1705,20 @@ public class StructureTeleporter {
         private final int blocksPerTick;
         // Result building
         private final TeleportResult.Builder resultBuilder;
+        private final VisualizationType visualizationType;
+        private final String visualizationAxis;
+        private final java.util.BitSet hullMask;
 
         private int currentIndex = 0;
         private boolean isCompleted = false;
+        private int projectionTicks = 0;
+        private final Random random = new Random();
 
         public AsyncPasteTask(List<BlockData> blocksToPaste, BlockPos targetPos, Level targetLevel, PasteMode mode,
                 List<BlockState> preservedBlocks, List<EntityData> entitiesToTeleport, Player player,
                 Selection selection, Rotation rotation, Mirror mirror, Vec3i sourceSize, int blocksPerTick,
-                TeleportResult.Builder resultBuilder) {
+                TeleportResult.Builder resultBuilder, VisualizationType visualizationType, String visualizationAxis,
+                java.util.BitSet hullMask) {
             this.blocksToPaste = blocksToPaste;
             this.targetPos = targetPos;
             this.targetLevel = targetLevel;
@@ -1652,6 +1732,71 @@ public class StructureTeleporter {
             this.sourceSize = sourceSize;
             this.blocksPerTick = blocksPerTick;
             this.resultBuilder = resultBuilder;
+            this.visualizationType = visualizationType;
+            this.visualizationAxis = visualizationAxis;
+            this.hullMask = hullMask;
+
+            if (visualizationType == VisualizationType.WARP_SC2) {
+                this.projectionTicks = 40; // 2 seconds of projection
+            }
+
+            // Apply Visualization Sorting
+            applySorting();
+        }
+
+        private void applySorting() {
+            if (visualizationType == VisualizationType.NONE)
+                return;
+
+            Comparator<BlockData> comparator;
+            if (visualizationType == VisualizationType.ASSEMBLY) {
+                // Strictly Bottom to Top
+                comparator = Comparator.comparingInt(b -> b.relativePos.getY());
+            } else if (visualizationType == VisualizationType.WARP) {
+                // Noisy sorting along axis
+                comparator = (b1, b2) -> {
+                    int val1, val2;
+                    if ("X".equalsIgnoreCase(visualizationAxis)) {
+                        val1 = b1.relativePos.getX();
+                        val2 = b2.relativePos.getX();
+                    } else if ("Z".equalsIgnoreCase(visualizationAxis)) {
+                        val1 = b1.relativePos.getZ();
+                        val2 = b2.relativePos.getZ();
+                    } else {
+                        val1 = b1.relativePos.getY();
+                        val2 = b2.relativePos.getY();
+                    }
+                    // Adding "noise" to sorting
+                    int noise1 = val1 * 10 + random.nextInt(15);
+                    int noise2 = val2 * 10 + random.nextInt(15);
+                    return Integer.compare(noise1, noise2);
+                };
+            } else if (visualizationType == VisualizationType.WARP_SC2) {
+                // Hull blocks first, then the rest.
+                // Within each group, Assembly (bottom-up)
+                java.util.BitSet actualHull = hullMask != null ? hullMask : new java.util.BitSet();
+                int width = sourceSize.getX() + 1;
+                int height = sourceSize.getY() + 1;
+
+                comparator = (b1, b2) -> {
+                    int idx1 = b1.relativePos.getX() + width * (b1.relativePos.getY() + height * b1.relativePos.getZ());
+                    int idx2 = b2.relativePos.getX() + width * (b2.relativePos.getY() + height * b2.relativePos.getZ());
+
+                    boolean isHull1 = actualHull.get(idx1);
+                    boolean isHull2 = actualHull.get(idx2);
+
+                    if (isHull1 && !isHull2)
+                        return -1;
+                    if (!isHull1 && isHull2)
+                        return 1;
+
+                    // If same group, sort by Y
+                    return Integer.compare(b1.relativePos.getY(), b2.relativePos.getY());
+                };
+            } else {
+                return;
+            }
+            this.blocksToPaste.sort(comparator);
         }
 
         @SubscribeEvent
@@ -1661,7 +1806,46 @@ public class StructureTeleporter {
             if (isCompleted)
                 return;
 
+            if (projectionTicks > 0) {
+                runProjection();
+                projectionTicks--;
+                return;
+            }
+
             processBatch();
+        }
+
+        private void runProjection() {
+            // Spawn wireframe particles at hull positions
+            if (targetLevel instanceof ServerLevel sl && hullMask != null) {
+                int width = sourceSize.getX() + 1;
+                int height = sourceSize.getY() + 1;
+                int depth = sourceSize.getZ() + 1;
+
+                // Randomly sample some particles from hullMask to avoid lag
+                int particlesPerTick = 10;
+                for (int i = 0; i < particlesPerTick; i++) {
+                    int index = random.nextInt(width * height * depth);
+                    if (hullMask.get(index)) {
+                        int dz = index / (width * height);
+                        int rem = index % (width * height);
+                        int dy = rem / width;
+                        int dx = rem % width;
+
+                        BlockPos relPos = new BlockPos(dx, dy, dz);
+                        BlockPos transformedRelPos = transformPos(relPos, rotation, mirror, sourceSize);
+                        BlockPos absolutePos = targetPos.offset(transformedRelPos);
+
+                        sl.sendParticles(ParticleTypes.ELECTRIC_SPARK,
+                                absolutePos.getX() + 0.5, absolutePos.getY() + 0.5, absolutePos.getZ() + 0.5,
+                                1, 0.1, 0.1, 0.1, 0.02);
+
+                        if (random.nextFloat() < 0.1f) {
+                            sl.playSound(null, absolutePos, SoundEvents.BEACON_AMBIENT, SoundSource.BLOCKS, 0.3f, 2.0f);
+                        }
+                    }
+                }
+            }
         }
 
         @SuppressWarnings("null")
@@ -1693,6 +1877,20 @@ public class StructureTeleporter {
                 if (shouldReplace(targetLevel.getBlockState(absolutePos), blockData.blockState, mode,
                         preservedBlocks)) {
                     targetLevel.setBlock(absolutePos, blockData.blockState, 16);
+
+                    // WARP EFFECTS
+                    if (visualizationType == VisualizationType.WARP && random.nextFloat() < 0.2f) {
+                        if (targetLevel instanceof ServerLevel sl) {
+                            sl.sendParticles(ParticleTypes.PORTAL,
+                                    absolutePos.getX() + 0.5, absolutePos.getY() + 0.5, absolutePos.getZ() + 0.5,
+                                    3, 0.2, 0.2, 0.2, 0.05);
+
+                            if (random.nextFloat() < 0.05f) {
+                                sl.playSound(null, absolutePos, SoundEvents.ENDERMAN_TELEPORT, SoundSource.BLOCKS, 0.5f,
+                                        1.5f + random.nextFloat() * 0.5f);
+                            }
+                        }
+                    }
 
                     if (blockData.nbt != null) {
                         @SuppressWarnings("null")
@@ -1804,12 +2002,21 @@ public class StructureTeleporter {
         }
     }
 
+    /**
+     * Task for asynchronous teleportation.
+     * WARNING: This functionality is currently HIGHLY UNSTABLE and not
+     * recommended for general use!
+     */
     public static class AsyncTeleportTask {
         private final java.util.BitSet validBlocks; // The mask from simulation
         private final Level targetLevel;
         private final Level sourceWorld;
         private final int blocksPerTick;
-        // ... other fields ...
+        private final VisualizationType visualizationType;
+        private final java.util.BitSet hullMask;
+
+        private int projectionTicks = 0;
+        private final Random random = new Random();
 
         // Iteration bounds
         private final int minX, minY, minZ;
@@ -1852,7 +2059,7 @@ public class StructureTeleporter {
                 Mirror mirror, Vec3i sourceSize, TeleportResult.Builder resultBuilder,
                 Player player, Selection selection, List<BlockState> excludedBlocks,
                 boolean checkExclusions, Set<BlockPos> filter, boolean includeAir,
-                java.util.BitSet validBlocks) {
+                java.util.BitSet validBlocks, java.util.BitSet hullMask, VisualizationType visualizationType) {
             this.targetLevel = targetLevel;
             this.sourceWorld = sourceWorld;
             this.blocksPerTick = blocksPerTick;
@@ -1871,6 +2078,12 @@ public class StructureTeleporter {
             this.checkExclusions = checkExclusions;
             this.includeAir = includeAir;
             this.validBlocks = validBlocks; // May be null if forced directly, handle graceful fallback?
+            this.hullMask = hullMask;
+            this.visualizationType = visualizationType;
+
+            if (visualizationType == VisualizationType.WARP_SC2) {
+                this.projectionTicks = 40;
+            }
             // Assuming non-null or treating null as "all valid" (or error) if requested.
             // For now, let's assume it's passed. If null, we might default to all 1s or
             // re-scan logic?
@@ -1978,10 +2191,49 @@ public class StructureTeleporter {
 
         @SubscribeEvent
         public void onServerTick(TickEvent.ServerTickEvent event) {
-            if (event.phase != TickEvent.Phase.END || completed)
+            if (event.phase != TickEvent.Phase.END)
                 return;
 
+            if (projectionTicks > 0) {
+                runProjection();
+                projectionTicks--;
+                return;
+            }
+
             processBatch(blocksPerTick);
+        }
+
+        private void runProjection() {
+            // Spawn wireframe particles at hull positions
+            if (targetLevel instanceof ServerLevel sl && hullMask != null) {
+                int width = sourceSize.getX() + 1;
+                int height = sourceSize.getY() + 1;
+                int depth = sourceSize.getZ() + 1;
+
+                // Randomly sample some particles from hullMask to avoid lag
+                int particlesPerTick = 10;
+                for (int i = 0; i < particlesPerTick; i++) {
+                    int index = random.nextInt(width * height * depth);
+                    if (hullMask.get(index)) {
+                        int dz = index / (width * height);
+                        int rem = index % (width * height);
+                        int dy = rem / width;
+                        int dx = rem % width;
+
+                        BlockPos relPos = new BlockPos(dx, dy, dz);
+                        BlockPos transformedRelPos = transformPos(relPos, rotation, mirror, sourceSize);
+                        BlockPos absolutePos = targetPos.offset(transformedRelPos);
+
+                        sl.sendParticles(ParticleTypes.ELECTRIC_SPARK,
+                                absolutePos.getX() + 0.5, absolutePos.getY() + 0.5, absolutePos.getZ() + 0.5,
+                                1, 0.1, 0.1, 0.1, 0.02);
+
+                        if (random.nextFloat() < 0.1f) {
+                            sl.playSound(null, absolutePos, SoundEvents.BEACON_AMBIENT, SoundSource.BLOCKS, 0.3f, 2.0f);
+                        }
+                    }
+                }
+            }
         }
 
         public void processBatch(int count) {
@@ -2103,6 +2355,21 @@ public class StructureTeleporter {
                     // We use 16 to suppress client updates during bulk operations.
                     // The bulk refresh at the end handles visual updates.
                     targetLevel.setBlock(destPos, transformedState, 16);
+
+                    // WARP EFFECTS
+                    if (visualizationType == VisualizationType.WARP && random.nextFloat() < 0.2f) {
+                        if (targetLevel instanceof ServerLevel sl) {
+                            sl.sendParticles(ParticleTypes.PORTAL,
+                                    destPos.getX() + 0.5, destPos.getY() + 0.5, destPos.getZ() + 0.5,
+                                    3, 0.2, 0.2, 0.2, 0.05);
+
+                            if (random.nextFloat() < 0.05f) {
+                                sl.playSound(null, destPos, SoundEvents.ENDERMAN_TELEPORT, SoundSource.BLOCKS, 0.5f,
+                                        1.5f + random.nextFloat() * 0.5f);
+                            }
+                        }
+                    }
+
                     if (nbt != null) {
                         @SuppressWarnings("null")
                         BlockEntity be = targetLevel.getBlockEntity(destPos);
@@ -2429,28 +2696,49 @@ public class StructureTeleporter {
                 }
             } else {
                 if (targetLevel instanceof ServerLevel sl) {
-                    Entity newEntity = info.entity;
-                    boolean isCrossDimension = targetLevel != sourceWorld;
+                    Entity currentEntity = info.entity;
 
-                    if (isCrossDimension) {
-                        newEntity = info.entity.getType().create(targetLevel);
+                    // If entity is already removed/discarded (e.g. during rollback),
+                    // try to find it by UUID at the current location (sourceWorld) to prevent
+                    // duplication.
+                    if (currentEntity.isRemoved() && info.entityUuid != null) {
+                        if (sourceWorld instanceof ServerLevel ssl) {
+                            Entity found = ssl.getEntity(info.entityUuid);
+                            if (found != null && !found.isRemoved()) {
+                                currentEntity = found;
+                            }
+                        }
+                    }
+
+                    boolean isCrossDimension = targetLevel != sourceWorld;
+                    Entity newEntity = currentEntity;
+
+                    if (isCrossDimension && !currentEntity.isRemoved()) {
+                        // For cross-dimension, we usually create a new entity if changeDimension isn't
+                        // sufficient
+                        // or if we are restoring from a snapshot where the original entity might be
+                        // "back home"
+                        newEntity = currentEntity.getType().create(targetLevel);
                         if (newEntity != null) {
-                            newEntity.restoreFrom(info.entity);
-                            info.entity.discard();
+                            newEntity.restoreFrom(currentEntity);
+                            currentEntity.discard();
                         }
                     }
 
                     if (newEntity != null) {
                         newEntity.moveTo(tx, ty, tz, yRot, newEntity.getXRot());
 
-                        if (isCrossDimension) {
+                        if (isCrossDimension || newEntity.isRemoved()) {
                             if (info.entityData != null) {
                                 CompoundTag cleanTag = info.entityData.copy();
                                 cleanTag.remove("UUID");
                                 newEntity.load(cleanTag);
                                 newEntity.setPos(tx, ty, tz);
                             }
-                            sl.addFreshEntity(newEntity);
+
+                            if (!sl.getEntity(newEntity.getUUID()).equals(newEntity)) {
+                                sl.addFreshEntity(newEntity);
+                            }
                         } else {
                             if (info.entityData != null) {
                                 CompoundTag cleanTag = info.entityData.copy();
