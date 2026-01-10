@@ -293,8 +293,8 @@ public class Selection {
         setFacePoint(FaceType.Z_MIN, new BlockPos(minX, minY, minZ));
         setFacePoint(FaceType.Z_MAX, new BlockPos(maxX, maxY, maxZ));
 
-        TeleportAPI.LOGGER.info(String.format(
-                "Built cuboid from %d points: X[%d..%d] Y[%d..%d] Z[%d..%d]",
+        TeleportAPI.LOGGER.debug(String.format(
+                "[TeleportAPI] Built cuboid from %d points: X[%d..%d] Y[%d..%d] Z[%d..%d]",
                 points.length, minX, maxX, minY, maxY, minZ, maxZ));
     }
 

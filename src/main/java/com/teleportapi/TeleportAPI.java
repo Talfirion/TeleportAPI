@@ -15,11 +15,9 @@ public class TeleportAPI {
     public TeleportAPI() {
         FMLJavaModLoadingContext.get().getModEventBus()
                 .addListener(this::commonSetup);
-
-        LOGGER.info("TeleportAPI loading!");
     }
 
     private void commonSetup(final FMLCommonSetupEvent event) {
-        LOGGER.info("TeleportAPI initialized!");
+        LOGGER.info("[TeleportAPI] Initialized");
     }
 }

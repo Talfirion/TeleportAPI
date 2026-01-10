@@ -500,7 +500,7 @@ public class StructureTeleporter {
             }
         }
 
-        TeleportAPI.LOGGER.info("Blocks copied: " + blocks.size());
+        TeleportAPI.LOGGER.debug("[TeleportAPI] Blocks copied: " + blocks.size());
         return blocks;
     }
 
@@ -568,7 +568,7 @@ public class StructureTeleporter {
             blocks.add(new BlockData(relativePos, sanitizeBlockState(state), nbt));
         }
 
-        TeleportAPI.LOGGER.info("Blocks copied from collection: " + blocks.size());
+        TeleportAPI.LOGGER.debug("[TeleportAPI] Blocks copied from collection: " + blocks.size());
         return blocks;
     }
 
@@ -592,7 +592,7 @@ public class StructureTeleporter {
         BlockPos max = selection.getMax();
         Level world = selection.getWorld();
 
-        TeleportAPI.LOGGER.info("[TeleportAPI] Clearing structure from " + min + " to " + max);
+        TeleportAPI.LOGGER.debug("[TeleportAPI] Clearing structure from " + min + " to " + max);
 
         // Pass 1: Remove all Block Entities (prevents item drops from containers)
         for (int x = min.getX(); x <= max.getX(); x++) {
@@ -640,7 +640,7 @@ public class StructureTeleporter {
             }
         }
 
-        TeleportAPI.LOGGER.info("[TeleportAPI] Structure cleared successfully");
+        TeleportAPI.LOGGER.debug("[TeleportAPI] Structure cleared successfully");
     }
 
     // Method for pasting structure to a new location
@@ -1036,7 +1036,7 @@ public class StructureTeleporter {
 
         // *** RESTORED LEGACY LOGIC ***
 
-        TeleportAPI.LOGGER.info("Starting Reliable Synchronous Teleport...");
+        TeleportAPI.LOGGER.info("[TeleportAPI] Starting Synchronous Teleport...");
 
         // Get BitSet mask if provided - needed for copyStructure
         java.util.BitSet validBlocksMask = request.getValidBlocksMask();
@@ -1081,7 +1081,7 @@ public class StructureTeleporter {
             // 3. PASTE TARGET
             if (useAsync && blocksPerTick > 0) {
                 // ASYNC MODE
-                TeleportAPI.LOGGER.info("Starting ASYNC PASTE Task (" + blocksPerTick + " blocks/tick)");
+                TeleportAPI.LOGGER.info("[TeleportAPI] Starting Async Paste (" + blocksPerTick + " bps)");
 
                 // Put players in SPECTATOR mode "Limbo"
                 for (EntityData info : entitiesToTeleport) {
@@ -1319,24 +1319,12 @@ public class StructureTeleporter {
             }
         }
 
-        private int getIndex(int x, int y, int z) {
-            int dx = x - minX;
-            int dy = y - minY;
-            int dz = z - minZ;
-            // Local index calculation: dx + width * (dy + height * dz)
-            // Correction: Standard mapping is x + width * (y + height * z)?
-            // Convention: x is fastest changing, then z, then y? Or x, y, z?
-            // Let's use x + width * (y + height * z) to match typical Minecraft loops (y is
-            // height).
-            // Actually, in loops we do X (inner), Y (mid), Z (outer) in some places, or X,
-            // Y, Z.
-            // Let's stick to X + (Width * (Y + Height * Z)) to be safe and consistent.
-            // Wait, common is (x, y, z). unique index.
-            // dx [0..width-1]
-            // dy [0..height-1]
-            // dz [0..depth-1]
-            // index = dx + width * (dy + height * dz)
+        private int getRelativeIndex(int dx, int dy, int dz) {
             return dx + width * (dy + height * dz);
+        }
+
+        private int getIndex(int x, int y, int z) {
+            return getRelativeIndex(x - minX, y - minY, z - minZ);
         }
 
         @SuppressWarnings("null")
@@ -1442,7 +1430,7 @@ public class StructureTeleporter {
                 int dx = x - minX;
                 int dy = y - minY;
                 int dz = z - minZ;
-                int index = getIndex(dx, dy, dz);
+                int index = getRelativeIndex(dx, dy, dz);
                 z++;
 
                 if (validBlocks.get(index)) {
@@ -1468,7 +1456,7 @@ public class StructureTeleporter {
 
                 // If neighbor is within bounds, check if it's NOT a valid block (air/excluded)
                 if (nx >= 0 && nx < width && ny >= 0 && ny < height && nz >= 0 && nz < depth) {
-                    if (!validBlocks.get(getIndex(nx, ny, nz))) {
+                    if (!validBlocks.get(getRelativeIndex(nx, ny, nz))) {
                         return true;
                     }
                 }
@@ -1815,6 +1803,7 @@ public class StructureTeleporter {
             processBatch();
         }
 
+        @SuppressWarnings("null")
         private void runProjection() {
             // Spawn wireframe particles at hull positions
             if (targetLevel instanceof ServerLevel sl && hullMask != null) {
@@ -1834,6 +1823,7 @@ public class StructureTeleporter {
 
                         BlockPos relPos = new BlockPos(dx, dy, dz);
                         BlockPos transformedRelPos = transformPos(relPos, rotation, mirror, sourceSize);
+                        @SuppressWarnings("null")
                         BlockPos absolutePos = targetPos.offset(transformedRelPos);
 
                         sl.sendParticles(ParticleTypes.ELECTRIC_SPARK,
@@ -2154,7 +2144,8 @@ public class StructureTeleporter {
             this.currentY = startY;
             this.currentZ = startZ;
 
-            TeleportAPI.LOGGER.info("[AsyncTeleport] BitSet Task created. Steps: " + stepX + "," + stepY + "," + stepZ);
+            TeleportAPI.LOGGER
+                    .debug("[TeleportAPI] AsyncTeleport Task created: " + stepX + ", " + stepY + ", " + stepZ);
 
             // Force load chunks at target location
             if (targetLevel instanceof ServerLevel serverLevel) {
@@ -2203,6 +2194,7 @@ public class StructureTeleporter {
             processBatch(blocksPerTick);
         }
 
+        @SuppressWarnings("null")
         private void runProjection() {
             // Spawn wireframe particles at hull positions
             if (targetLevel instanceof ServerLevel sl && hullMask != null) {
@@ -2222,6 +2214,7 @@ public class StructureTeleporter {
 
                         BlockPos relPos = new BlockPos(dx, dy, dz);
                         BlockPos transformedRelPos = transformPos(relPos, rotation, mirror, sourceSize);
+                        @SuppressWarnings("null")
                         BlockPos absolutePos = targetPos.offset(transformedRelPos);
 
                         sl.sendParticles(ParticleTypes.ELECTRIC_SPARK,
@@ -2430,7 +2423,7 @@ public class StructureTeleporter {
 
         @SuppressWarnings("null")
         private void onComplete() {
-            TeleportAPI.LOGGER.info("[AsyncTeleport] Block placement complete, teleporting entities");
+            TeleportAPI.LOGGER.debug("[TeleportAPI] Block placement complete, processing entities...");
 
             // Bulk Client Refresh (Optimization for Flag 16)
             // Bulk Client Refresh (Always execute for async teleport)
@@ -2543,7 +2536,7 @@ public class StructureTeleporter {
             MinecraftForge.EVENT_BUS
                     .post(new StructureTeleportEvent.Post(selection, targetLevel, targetPos, player, finalResult));
 
-            TeleportAPI.LOGGER.info("[AsyncTeleport] Task completed successfully");
+            TeleportAPI.LOGGER.info("[TeleportAPI] Teleportation task completed successfully");
         }
 
         public boolean isCompleted() {
